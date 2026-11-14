@@ -10,7 +10,19 @@ release below is the current one.
 
 ---
 
-## [Unreleased]
+## [2.1.0-beta.5] — 2026-11-14
+
+**Set-password links, `${VAR}` in a code agent's `with:`, and `tuvl deploy` for the web UI.** `tuvl` and `tuvl-insight` release together as `2.1.0b5`.
+This is a beta. Install it by pinning both packages, **without** `--prerelease allow`:
+
+```bash
+uv tool install "tuvl==2.1.0b5" --with "tuvl-insight==2.1.0b5"      # the CLI and Insight
+pip install "tuvl==2.1.0b5" "tuvl-insight==2.1.0b5"                  # or into an environment
+pip install "tuvl==2.1.0b5"                                          # the production engine only
+```
+
+Upgrading from 2.1.0b4: nothing in your YAML changes. In a project created by `tuvl init`, change the `tuvl-insight` pin in the `dev` group to
+`>=2.1.0b5` and run `uv lock --upgrade`. The new `tuvl_system_iam_password_tokens` table is created at the next boot; no migration is needed.
 
 ### Added
 
