@@ -88,6 +88,9 @@ Deploy this project to a tuvl cloud with a client token (cloud.tuvl.io by defaul
 | `--set-hostname` | TEXT |  | Change the name the deployed app is served on, and nothing else: nothing is packaged or uploaded. The app restarts behind the new name; the old name stops working. |
 | `--check-dns` |  |  | Check that a name is available and points at the cloud (the name of --hostname or --set-hostname, else the project's default name). Nothing is deployed. |
 | `--project` | TEXT |  | The project to check or rename (default: the name in pyproject.toml). |
+| `--ui` | PATH |  | The folder holding the project's web UI (static files, index.html at its top). Default: ui/ in the project when it has an index.html. |
+| `--no-ui` |  |  | Deploy the backend only, even if the project has a ui/ folder. |
+| `--ui-only` |  |  | Deploy only the web UI of a project that is already running; the backend is not packaged or uploaded. |
 | `--admin-email` | TEXT |  | Create an administrator with this email in the new app; its password is made here, shown once, and kept nowhere. (`TUVL_ADMIN_EMAIL`) |
 | `--no-admin` |  |  | Do not create an administrator in the app. |
 | `--login` |  |  | Save a client token for this cloud (asked for with a hidden prompt) and exit. |
@@ -1037,7 +1040,7 @@ List the scopes this project enforces and what each guards.
 
 ### `tuvl iam users create`
 
-Create a user. The password is prompted (or TUVL_IAM_NEW_PASSWORD).
+Create a user. The password is prompted (or TUVL_IAM_NEW_PASSWORD) unless --no-password.
 
 Arguments: `<email>`
 
@@ -1047,6 +1050,7 @@ Arguments: `<email>`
 | `--last-name` | TEXT |  |  |
 | `--phone` | TEXT |  |  |
 | `--role`, `-r` | TEXT (repeatable) |  | A role to give (repeatable). |
+| `--no-password` |  |  | Create the user with no password; give them `users invite`. |
 
 
 ### `tuvl iam users disable`
@@ -1061,6 +1065,18 @@ Arguments: `<email>`
 Let a disabled user sign in again.
 
 Arguments: `<email>`
+
+
+### `tuvl iam users invite`
+
+Make a one-time link for a user to set their own password, and print it.
+
+Arguments: `<email>`
+
+| Option | Value | Default | What it does |
+|---|---|---|---|
+| `--url` | TEXT |  | Your app's set-password address with {token} where the token goes, for example 'https://app.example.com/#/set-password?token={token}'. Without it only the token is printed. |
+| `--hours` | INTEGER | `72` | How long the link works (1 to 720). |
 
 
 ### `tuvl iam users list`
