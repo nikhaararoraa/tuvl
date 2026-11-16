@@ -592,7 +592,7 @@ def export_cmd(
     from tuvl.core.config import settings
 
     # a developer's own database has no administrator to sign in as; production always asks
-    roles = _execute(ctx, op, auth=settings.tuvl_env == "production")
+    roles = _execute(ctx, op, auth=settings.is_production)
     if not roles:
         raise _fail("There are no active roles to export.")
     text = yaml.safe_dump(

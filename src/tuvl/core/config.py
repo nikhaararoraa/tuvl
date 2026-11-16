@@ -19,6 +19,10 @@ _PROJECT_DIR = Path(os.environ.get("TUVL_PROJECT_DIR", ".")).resolve()
 load_dotenv(_PROJECT_DIR / ".env", override=False)
 
 
+#: The values of ``TUVL_ENV`` the engine knows; any other is treated as not production.
+KNOWN_ENVS = ("production", "development", "test", "staging")
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=str(_PROJECT_DIR / ".env"),
@@ -287,6 +291,15 @@ class Settings(BaseSettings):
     tuvl_oauth_microsoft_client_secret: str = ""
     # Tenant: "common" (any MS account), "organizations", or a specific tenant UUID.
     tuvl_oauth_microsoft_tenant_id: str = "common"
+
+    @property
+    def is_production(self) -> bool:
+        """``TUVL_ENV`` names production. Case and padding do not matter; anything else is not production."""
+        return self.tuvl_env.strip().lower() == "production"
+
+    @property
+    def env_is_known(self) -> bool:
+        return self.tuvl_env.strip().lower() in KNOWN_ENVS
 
 
 settings = Settings()

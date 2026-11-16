@@ -208,7 +208,7 @@ async def build_tools(agent: Any, ctx: EngineContext, sessions: dict[str, Any]) 
             for item in listed.tools:
                 if item.name not in ref.allow:
                     continue
-                if settings.tuvl_env == "production":
+                if settings.is_production:
                     check_live_mcp(settings.project_dir, ref.mcp, item.name, item.inputSchema)
                 tools[item.name] = Tool(
                     item.name,

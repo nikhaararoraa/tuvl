@@ -25,7 +25,13 @@ def test_is_production_ignores_case_and_padding(value: str, production: bool) ->
 
 @pytest.mark.parametrize(
     ("value", "known"),
-    [("production", True), ("Development", True), ("test", True), ("staging", True), ("prod", False)],
+    [
+        ("production", True),
+        ("Development", True),
+        ("test", True),
+        ("staging", True),
+        ("prod", False),
+    ],
 )
 def test_an_unknown_name_is_reported(value: str, known: bool) -> None:
     assert Settings(tuvl_env=value).env_is_known is known

@@ -165,7 +165,7 @@ All settings are read from `.env` or environment variables. Settings also suppor
 | `TUVL_OTLP_PROTOCOL` | `http/protobuf` | `http/protobuf` or `grpc` (needs `pip install 'tuvl[otel-grpc]'`) |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | — | Standard OTel env var — takes precedence over `TUVL_OTLP_PROTOCOL` when set |
 | `TUVL_SERVICE_NAME` | `tuvl` | `service.name` resource attribute in every span |
-| `TUVL_ENV` | `production` | `production` → JSON logs; `development` → coloured console logs |
+| `TUVL_ENV` | `production` | `production` → JSON logs; `development` → coloured console logs. Case and padding do not matter; a value other than `production`, `development`, `test` or `staging` is logged at boot and treated as not production |
 
 ### `.tuvl/telemetry.yaml` override
 
