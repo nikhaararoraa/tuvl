@@ -114,9 +114,10 @@ def decode_token(token: str) -> Claims:
     key), issuer, required claims and expiry; return its claims. Raises PyJWT's
     ``InvalidTokenError`` (``ExpiredSignatureError`` when expired). Doesn't
     consult the revocation list or session ends — :func:`verify_bearer_token` does."""
+    keys = get_key_manager()
     claims: Claims = jwt.decode(
         token,
-        get_key_manager().public_key,
+        keys.verification_key(jwt.get_unverified_header(token).get("kid")),
         algorithms=[ALGORITHM],
         issuer=ISSUER,
         options={"require": ["iss", "sub", "iat"]},
