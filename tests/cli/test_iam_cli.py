@@ -7,6 +7,7 @@ PostgreSQL, so each invocation is a separate process-like session.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from pathlib import Path
 
 import pytest
@@ -206,6 +207,34 @@ def test_reset_admin_applies_the_password_rule_too(db):
     )
     assert too_long.exit_code == 1 and "at most 72 bytes" in too_long.output
     assert iam("roles", "list").exit_code == 0  # the old password still works
+
+
+def test_unlock_clears_a_user_made_to_wait(db):
+    assert (
+        iam("users", "create", "ann@example.com", TUVL_IAM_NEW_PASSWORD="ann-pw-12345").exit_code
+        == 0
+    )
+
+    async def guess(session):
+        for _ in range(7):
+            with contextlib.suppress(iam_service.AuthenticationError):
+                await iam_service.login(
+                    session, login_str="ann@example.com", password="nope-nope-1"
+                )
+
+    db.run(guess)
+    refused = iam("roles", "list", email="ann@example.com", password="ann-pw-12345")
+    assert refused.exit_code == 1 and "Too many" in refused.output
+
+    assert iam("users", "unlock", "ann@example.com").exit_code == 0
+    # unlocked: she is judged again (and, not being an administrator, is refused for that reason)
+    again = iam("roles", "list", email="ann@example.com", password="ann-pw-12345")
+    assert again.exit_code == 1 and "does not hold iam:admin" in again.output
+
+
+def test_unlock_of_a_user_who_is_not_waiting_says_so(db):
+    result = iam("users", "unlock", "nobody@example.com")
+    assert result.exit_code == 0 and "was not waiting" in result.output
 
 
 def test_a_role_with_members_needs_force(db):
