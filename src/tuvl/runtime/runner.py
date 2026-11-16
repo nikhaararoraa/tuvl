@@ -82,6 +82,8 @@ class RunState:
     #: Parent runs above this one (workflow-as-tool nesting); fixed for the run.
     depth: int
     tokens: int = 0
+    #: The run was found half way through compensation (its worker was lost): finish that, do not walk on.
+    compensating: bool = False
     #: The last agent's final result and attempt count (spans, hooks).
     last: AgentResult | None = None
     attempts: int = 0
@@ -118,6 +120,9 @@ class Runner:
                     await state.data.close()
 
     async def walk(self, state: RunState, lease: Lease) -> None:
+        if state.compensating:
+            await self.resume_compensation(state, lease)
+            return
         by_id = {a.id: a for a in state.doc.spec.agents}
         while True:
             if lease.lost.is_set():
@@ -197,6 +202,7 @@ class Runner:
             run.workflow_hash,
             depth,
             run.tokens_used,
+            compensating=run.status == "compensating",
         )
 
     # ── one agent ────────────────────────────────────────────────────────────
@@ -644,7 +650,7 @@ class Runner:
                     lease.lost.set()
                 return
         elif rollback:
-            status = await self.compensate(state, lease) or "completed"
+            status = await self.compensate(state, lease, end=end) or "completed"
         async with AsyncSession(self.engine) as s:
             if await queue.release(
                 s,
@@ -681,7 +687,7 @@ class Runner:
             await state.data.rollback()  # per_run: undoing is discarding the transaction
             outcome = None
         else:
-            outcome = await self.compensate(state, lease)
+            outcome = await self.compensate(state, lease, error=error)
         final = status
         if outcome == "failed":
             final, error = "failed", {**error, "compensation": "failed"}
@@ -711,9 +717,55 @@ class Runner:
 
     # ── compensation (spec §14.7) ────────────────────────────────────────────
 
-    async def compensate(self, state: RunState, lease: Lease) -> str | None:
+    async def resume_compensation(self, state: RunState, lease: Lease) -> None:
+        """Finish the compensation a lost worker began. The compensators that completed are not run again
+        and the agent that failed is not tried again: the run ends the way it was going to, which
+        :meth:`compensate` recorded when it began (the error, or the rolled-back end)."""
+        run = state.run
+        error = run.error
+        if isinstance(error, dict):
+            error_type = str(error.get("error_type") or "unknown")
+            await self.end_with_error(
+                state,
+                lease,
+                error_type,
+                str(error.get("message") or ""),
+                agent_id=error.get("agent_id"),
+                status="aborted" if error_type == "aborted" else "failed",
+            )
+        elif run.end_name:
+            await self.finish(state, lease, run.end_name)
+        else:
+            await self.end_with_error(
+                state,
+                lease,
+                "compensation_interrupted",
+                "compensation was interrupted and the run did not record how it was to end",
+            )
+
+    async def _compensated(self, run_id: uuid.UUID) -> set[str]:
+        """The agents whose compensator has already completed successfully."""
+        async with AsyncSession(self.engine) as s:
+            events = await journal.events(s, run_id)
+        return {
+            str(e.payload["for"])
+            for e in events
+            if e.type == "compensation_completed" and e.payload.get("ok")
+        }
+
+    async def compensate(
+        self,
+        state: RunState,
+        lease: Lease,
+        *,
+        error: dict[str, Any] | None = None,
+        end: str | None = None,
+    ) -> str | None:
         """Run the compensators of completed agents, newest first. Returns
-        ``None`` when nothing needed compensating."""
+        ``None`` when nothing needed compensating.
+
+        The end the run is heading for (its *error*, or the *end* that rolls back) is recorded with the
+        status, so a worker that takes the run over after this one is lost can finish it the same way."""
         by_id = {a.id: a for a in state.doc.spec.agents}
         steps = []
         for agent_id in reversed(state.completed):
@@ -722,16 +774,24 @@ class Runner:
                 steps.append((agent_id, by_id[compensator]))
         if not steps:
             return None
+        done = await self._compensated(state.run.id)
+        recorded: dict[str, Any] = {"status": "compensating"}
+        if error is not None:
+            recorded["error"] = journal.to_json(error)
+        if end is not None:
+            recorded["end_name"] = end
         async with AsyncSession(self.engine) as s:
             await queue._execute(
                 s,
                 sa.update(_RUNS)
                 .where(_RUNS.c.id == state.run.id, _RUNS.c.lease_owner == lease.owner)
-                .values(status="compensating"),
+                .values(**recorded),
             )
             await s.commit()
         ok = True
         for original, comp in steps:
+            if original in done:
+                continue
             async with AsyncSession(self.engine, expire_on_commit=False) as s:
                 await journal.append_event(
                     s,
@@ -762,12 +822,6 @@ class Runner:
                         "error_type": result.error_type,
                         "message": result.message,
                     },
-                )
-                await queue._execute(
-                    s,
-                    sa.update(_RUNS)
-                    .where(_RUNS.c.id == state.run.id, _RUNS.c.lease_owner == lease.owner)
-                    .values(status="running"),
                 )
                 await s.commit()
         return "compensated" if ok else "failed"

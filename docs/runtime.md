@@ -90,6 +90,13 @@ of every **completed** agent that declares one, in **reverse completion order**.
 receives the original agent's inputs and outputs. A failing compensator makes the run `failed`
 (`compensation_failed`); the rest still run. Success ends as `compensated`.
 
+A compensating run holds its lease like any other: its heartbeat goes on (the status is `compensating`) and a
+compensator that takes longer than the lease does not let another worker take the run. When a worker is lost half
+way, another claims the run, still `compensating`, and **finishes the compensation**: a compensator that completed
+is not run again, the agent that failed is not tried again, and the run ends the way it was going to (the error is
+recorded when compensation begins; an end that rolls back keeps its name). A compensator that was running when the
+worker was lost runs again, so give it an idempotency key like any step.
+
 ## Journal events
 
 Every event: `{ run_id, seq, ts, type, agent_id, engine, tokens, latency_ms, payload }`.
