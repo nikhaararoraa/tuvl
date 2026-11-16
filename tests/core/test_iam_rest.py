@@ -23,7 +23,14 @@ from tuvl.core.auth import federation, iam_service
 from tuvl.core.auth import router as auth_router
 from tuvl.core.auth.blacklist import token_blacklist
 from tuvl.core.auth.federation_loader import FEDERATION_REGISTRY
-from tuvl.core.auth.models import IAMRole, IAMRoleScope, IAMUser, IAMUserRole
+from tuvl.core.auth.models import (
+    IAMRevokedToken,
+    IAMRole,
+    IAMRoleScope,
+    IAMSessionEnd,
+    IAMUser,
+    IAMUserRole,
+)
 from tuvl.core.auth.schemas import TokenUser
 from tuvl.core.auth.token import mint_token
 
@@ -42,9 +49,9 @@ def _admin_token() -> str:
 
 @pytest.fixture(autouse=True)
 def _clean_blacklist():
-    token_blacklist._memory.clear()
+    token_blacklist.reset_cache()
     yield
-    token_blacklist._memory.clear()
+    token_blacklist.reset_cache()
 
 
 async def _make_iam_engine():
@@ -61,6 +68,8 @@ async def _make_iam_engine():
                 IAMRole.__table__,
                 IAMUserRole.__table__,
                 IAMRoleScope.__table__,
+                IAMSessionEnd.__table__,
+                IAMRevokedToken.__table__,
             ],
         )
     return engine

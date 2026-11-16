@@ -20,7 +20,15 @@ from tuvl.cli import app
 from tuvl.cli.commands import iam as iam_cli
 from tuvl.core.auth import iam_service
 from tuvl.core.auth.blacklist import token_blacklist
-from tuvl.core.auth.models import IAMPasswordToken, IAMRole, IAMRoleScope, IAMUser, IAMUserRole
+from tuvl.core.auth.models import (
+    IAMPasswordToken,
+    IAMRevokedToken,
+    IAMRole,
+    IAMRoleScope,
+    IAMSessionEnd,
+    IAMUser,
+    IAMUserRole,
+)
 from tuvl.core.auth.seed import parse_role_seed
 from tuvl.core.config import settings
 
@@ -31,9 +39,9 @@ runner = CliRunner()
 
 @pytest.fixture(autouse=True)
 def _clean():
-    token_blacklist._memory.clear()
+    token_blacklist.reset_cache()
     yield
-    token_blacklist._memory.clear()
+    token_blacklist.reset_cache()
 
 
 @pytest.fixture
@@ -51,6 +59,8 @@ def db(monkeypatch, tmp_path):
                     IAMUserRole.__table__,
                     IAMRoleScope.__table__,
                     IAMPasswordToken.__table__,
+                    IAMSessionEnd.__table__,
+                    IAMRevokedToken.__table__,
                 ],
             )
         await engine.dispose()
@@ -316,3 +326,12 @@ def test_invite_without_a_url_prints_just_the_token_and_checks_the_inputs(db):
     bad_url = iam("users", "invite", "wes@example.com", "--url", "https://app.test/set")
     assert bad_url.exit_code == 2 and "{token}" in bad_url.output
     assert iam("users", "invite", "wes@example.com", "--hours", "0").exit_code == 1
+
+
+def test_a_redis_that_is_configured_but_unreachable_stops_the_command(db, monkeypatch):
+    import tuvl.core.infra.redis as redis_infra
+
+    monkeypatch.setattr(redis_infra, "redis_configured", lambda: True)
+    result = iam("roles", "list")
+    assert result.exit_code == 1
+    assert "Redis datasource is configured" in result.output

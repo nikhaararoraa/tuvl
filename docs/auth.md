@@ -46,7 +46,7 @@ Two planes, one token:
 Key properties:
 
 - **Stateless verification.** The IAM database is consulted only at mint time. A token is a snapshot of the user's roles and scopes; role changes take effect on the next mint (login or refresh).
-- **Revocation is the one stateful exception.** Logout and refresh push the token's SHA-256 hash onto a Redis-backed blacklist checked on every REST request, and narrowing a user's access ends their sessions (below).
+- **Revocation is the one stateful exception.** Logout and refresh refuse the token from then on, and narrowing a user's access ends their sessions (below). Both are kept in Redis when a Redis datasource is deployed and in Postgres otherwise, and checked on every authenticated request.
 - **One guard, every transport.** `verify_bearer_token` and `authorize_token` in `tuvl/core/auth/access.py` are the single source of truth for the FastAPI dependencies and MCP export.
 
 ---
@@ -89,8 +89,9 @@ verify_token / verify_bearer_token
     ├── 401 if no token
     ├── dev-mode shortcut: dev key → synthetic iam:admin claims   (§9)
     ├── decode_token: signature (EdDSA only), issuer, sub/iat/iss present, exp
-    ├── token_blacklist.is_revoked(token)        ← Redis / in-process
-    └── issued before the user's sessions ended? ← iat vs sessions_ended_at
+    ├── token_blacklist.refusal(token, claims)   ← Redis, or Postgres when no Redis is deployed
+    │     ├── revoked?                           ← jti (Postgres) / SHA-256 of the token (Redis)
+    │     └── issued before the user's sessions ended? ← iat vs sessions ended at
             │
             ▼
 get_current_user(claims) → TokenUser(user_id, groups, scopes, tenant_id)   (shape-checked)
@@ -150,7 +151,14 @@ every token issued before that is refused (`401 Session ended — sign in again.
 mints a token with the current roles. Granting a role or adding scopes ends nothing; it arrives at
 the next sign-in. Tokens without `iat` (minted before this existed) count as older than any end.
 
-Revocation (`tuvl/core/auth/blacklist.py`) stores the SHA-256 hex digest of the raw token — never the token itself — with a TTL matching the token lifetime, in Redis when a redis datasource is configured, otherwise in an in-process dict. **Multi-worker deployments must configure Redis**: without it, a token revoked on one worker is still accepted by the others.
+Revocation and session end (`tuvl/core/auth/blacklist.py`) live in one of two places, chosen by the deployment:
+
+- **Redis**, when the project has a `type: redis` datasource and it is reachable: keys `tuvl:blacklist:<sha256 of the token>` and `tuvl:sessions-ended:<user id>`, with an expiry matching the token lifetime (none for a token that has no `exp`). A check is one round trip. Keep Redis persistent, or a restart forgets what it held.
+- **Postgres**, on the primary datasource, when there is no Redis datasource: tables `tuvl_system_iam_revoked_tokens` (the token's `jti`, removed once the token would have expired) and `tuvl_system_iam_session_ends` (one row per user, which outlives a deleted user). A write is made in the transaction of the change that caused it, so they commit or roll back together. A worker keeps its own answer for `TUVL_SESSION_CACHE_SECONDS` (default 5; `0` asks the database on every request); a change made in another worker or by `tuvl iam` is seen within that time, a change in the same process at once.
+
+Either way a revocation or session end made by one worker, by `tuvl iam` in a process of its own, or before a restart, is seen by every other worker. `tuvl iam` selects the store the same way the server does; if a Redis datasource is configured but cannot be reached from where the command runs it refuses to change access, rather than record the change where the server does not look. If the server cannot reach Redis at boot it logs `redis.unreachable.fallback_postgres` and uses Postgres (`TUVL_REQUIRE_REDIS=true` refuses to boot instead).
+
+When the store cannot be reached the token is refused with `503`, never let in. A process with no primary datasource at all has nothing to ask: the check is skipped and `auth.session_store.none` is logged once. With `TUVL_TOKEN_TTL_SECONDS=0` tokens never expire and so does a revocation; boot logs an error in production.
 
 There is no server-side session table; the token *is* the session.
 
@@ -433,7 +441,7 @@ Rules of thumb: 401 always carries `WWW-Authenticate: Bearer` and means "re-auth
 | `tuvl/core/auth/keys.py` | `TuvlKeyManager` — `TUVL_SIGNING_KEY` loading (legacy name too), key id + JWK, ephemeral dev key, fail-closed production check |
 | `tuvl/core/auth/models.py` | The four `tuvl_system_iam_*` tables |
 | `tuvl/core/auth/crypto.py` | bcrypt hashing/verification + threadpool wrappers |
-| `tuvl/core/auth/blacklist.py` | Token revocation store (Redis / in-process) |
+| `tuvl/core/auth/blacklist.py` | Token revocation and session-end store (Redis, or Postgres when no Redis is deployed) |
 | `tuvl/core/auth/iam_service.py` | Transport-neutral IAM service — the one implementation of bootstrap, login, refresh/logout, user & role CRUD, and federation-provider admin; `router.py` is a thin adapter over it |
 | `tuvl/core/auth/router.py` | `/auth` REST surface: bootstrap, login, me/refresh/logout, user & role admin — a thin adapter over `iam_service.py` |
 | `tuvl/core/auth/federation.py` | Federated login (OAuth authorization-code and device flows) and the `/auth/admin/federation` provider admin |

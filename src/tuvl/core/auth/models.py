@@ -7,6 +7,8 @@ tuvl_system_iam_roles       — named roles, e.g. "hr_manager", "recruiter".
 tuvl_system_iam_user_roles  — many-to-many: which user holds which role.
 tuvl_system_iam_role_scopes — which scopes a role grants, e.g. "requisition:write".
 tuvl_system_iam_password_tokens — one-time links that let a user set their own password (hashed, expiring).
+tuvl_system_iam_session_ends — when a user's sessions were last ended (tokens issued before are refused).
+tuvl_system_iam_revoked_tokens — tokens refused until they would have expired anyway (logout, refresh).
 
 Design notes
 ------------
@@ -145,4 +147,27 @@ class IAMPasswordToken(SQLModel, table=True):
     created_at: datetime.datetime = Field(
         default_factory=datetime.datetime.utcnow,
         sa_column=sa.Column(sa.DateTime, default=datetime.datetime.utcnow, nullable=False),
+    )
+
+
+class IAMSessionEnd(SQLModel, table=True):
+    """When a user's sessions were last ended: a token issued before then is refused.
+
+    Keyed by the token's subject, not by a foreign key, so it outlives a deleted user. Used when no Redis
+    datasource is deployed (see ``tuvl.core.auth.blacklist``)."""
+
+    __tablename__ = "tuvl_system_iam_session_ends"
+
+    user_id: str = Field(primary_key=True)
+    ended_at_ms: int = Field(sa_column=sa.Column(sa.BigInteger, nullable=False))
+
+
+class IAMRevokedToken(SQLModel, table=True):
+    """A token refused until it would have expired anyway (``expires_at_ms`` is null: never expires)."""
+
+    __tablename__ = "tuvl_system_iam_revoked_tokens"
+
+    jti: str = Field(primary_key=True)
+    expires_at_ms: int | None = Field(
+        default=None, sa_column=sa.Column(sa.BigInteger, nullable=True, index=True)
     )

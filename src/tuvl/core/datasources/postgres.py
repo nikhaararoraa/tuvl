@@ -40,6 +40,10 @@ class PostgresStartupError(Exception):
     """Raised when PostgreSQL is unreachable at startup."""
 
 
+class DatasourceNotInitialisedError(RuntimeError):
+    """A session was asked for on a datasource whose engine has not been built."""
+
+
 # ---------------------------------------------------------------------------
 # Per-datasource engine / session-factory registries
 # ---------------------------------------------------------------------------
@@ -265,7 +269,7 @@ def get_session_factory(ds_name: str, is_write: bool) -> async_sessionmaker:
     pool = _sessions_rw if is_write else _sessions_ro
     if ds_name not in pool:
         registered = list(_sessions_rw.keys()) or ["(none)"]
-        raise RuntimeError(
+        raise DatasourceNotInitialisedError(
             f"Datasource '{ds_name}' is not initialised. "
             f"Registered datasources: {registered}. "
             f"Check that a datasource YAML with metadata.name='{ds_name}' exists."
@@ -556,8 +560,10 @@ async def init_db() -> None:
     if _PRIMARY_DS in _engines_rw:
         from tuvl.core.auth.models import (
             IAMPasswordToken,
+            IAMRevokedToken,
             IAMRole,
             IAMRoleScope,
+            IAMSessionEnd,
             IAMUser,
             IAMUserRole,
         )
@@ -568,6 +574,8 @@ async def init_db() -> None:
             table_of(IAMUserRole),
             table_of(IAMRoleScope),
             table_of(IAMPasswordToken),
+            table_of(IAMSessionEnd),
+            table_of(IAMRevokedToken),
         ]
         async with _engines_rw[_PRIMARY_DS].begin() as conn:
             await conn.run_sync(
@@ -725,7 +733,7 @@ async def get_primary_rw_session() -> AsyncGenerator[AsyncSession]:
     ``_close_session_safely`` for the rationale.
     """
     if _PRIMARY_DS not in _sessions_rw:
-        raise RuntimeError(
+        raise DatasourceNotInitialisedError(
             f"Primary datasource '{_PRIMARY_DS}' is not initialised. "
             "Ensure a datasource YAML with that name exists."
         )

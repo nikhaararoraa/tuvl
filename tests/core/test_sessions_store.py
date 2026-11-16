@@ -9,10 +9,10 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
-from sqlalchemy import event, func, select
+from sqlalchemy import event, func
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel
+from sqlmodel import SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from tuvl.core.auth.blacklist import SessionStoreUnavailableError, token_blacklist
@@ -169,7 +169,7 @@ async def test_a_store_that_does_not_answer_refuses_instead_of_letting_the_token
         await token_blacklist.refusal("t", claims())
 
 
-async def test_no_primary_datasource_is_skipped_in_dev_mode_and_refused_in_production(
+async def test_no_primary_datasource_means_nothing_to_ask(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def missing() -> AsyncIterator[AsyncSession]:
@@ -178,11 +178,9 @@ async def test_no_primary_datasource_is_skipped_in_dev_mode_and_refused_in_produ
 
     monkeypatch.setattr(postgres, "get_primary_rw_session", missing)
     monkeypatch.setattr(settings, "tuvl_session_cache_seconds", 0.0)
-    monkeypatch.setattr(settings, "tuvl_dev_mode", True)
-    assert await token_blacklist.refusal("t", claims()) is None
-    monkeypatch.setattr(settings, "tuvl_dev_mode", False)
-    with pytest.raises(SessionStoreUnavailableError):
-        await token_blacklist.refusal("t", claims())
+    for dev_mode in (True, False):
+        monkeypatch.setattr(settings, "tuvl_dev_mode", dev_mode)
+        assert await token_blacklist.refusal("t", claims()) is None
 
 
 # ── Redis: the store when a Redis datasource is deployed ──────────────────────

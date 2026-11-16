@@ -154,6 +154,10 @@ class Settings(BaseSettings):
     # recommended for production).  Default: 24 hours.
     tuvl_token_ttl_seconds: int = 86400
 
+    # How long a worker trusts its own answer to "is this token still good?" when revocations and session ends
+    # are kept in Postgres (no Redis datasource). 0 asks the database on every request.
+    tuvl_session_cache_seconds: float = 5.0
+
     # First administrator for a fresh production database (see ``tuvl.core.auth.seed``).
     # Used once: ignored when the IAM tables already hold a user or a role.
     tuvl_bootstrap_admin_email: str | None = None

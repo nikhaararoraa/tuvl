@@ -150,11 +150,24 @@ def _execute[T](
 
     async def main() -> T:
         from tuvl.core.datasources import postgres
+        from tuvl.core.infra.redis import (
+            close_redis,
+            init_redis,
+            is_redis_available,
+            redis_configured,
+        )
 
         if postgres._PRIMARY_DS not in postgres._sessions_rw:
             raise _fail(
                 "No primary PostgreSQL datasource is configured. Run this from the project "
                 "directory (or pass --project-dir) with the database settings in the environment."
+            )
+        # revocations and session ends go where the server reads them: Redis when the project has one
+        await init_redis()
+        if redis_configured() and not is_redis_available():
+            raise _fail(
+                "A Redis datasource is configured but cannot be reached from here, so this change could "
+                "not end the sessions the server keeps in Redis. Fix the connection and run it again."
             )
         generator = postgres.get_primary_rw_session()
         session = await generator.__anext__()
@@ -168,6 +181,7 @@ def _execute[T](
             return await op(session, actor)
         finally:
             await generator.aclose()
+            await close_redis()
             await postgres.close_db()
 
     try:
