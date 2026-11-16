@@ -9,7 +9,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from tuvl.core.auth.access import bind_principal_context, require_access
+from tuvl.core.auth.schemas import TokenUser
 from tuvl.core.datasources.postgres import model_session
+from tuvl.core.models import secure
 from tuvl.core.models.schemas import SCHEMA_REGISTRY
 from tuvl.core.repositories.registry import get_repository
 from tuvl.core.system_config import expose_model_crud
@@ -118,15 +120,34 @@ def _make_crud_router(model_name: str) -> APIRouter:
     # Automatically routes to the datasource declared in the model's YAML.
     _session = model_session(model_name)
 
+    def _present(value: Any, user: TokenUser, cls: Any, incl: frozenset[str] = _NO_INCLUDE) -> Any:
+        """*value* (a record, or a list of them) as *user* may see it: the ``secure`` fields they may not
+        read are left out, in the record and in the related records an include embeds."""
+        if not secure.needs_redaction(model_name, user.scopes, incl):
+            return value
+        rows = value if isinstance(value, list) else [value]
+        dumped = [
+            secure.strip_hidden(
+                model_name, cls.model_validate(r).model_dump(by_alias=True), user.scopes
+            )
+            for r in rows
+        ]
+        return dumped if isinstance(value, list) else dumped[0]
+
     @router.post(
         "/",
         response_model=ReadCls,
         response_model_by_alias=True,
+        response_model_exclude_unset=True,
         status_code=201,
         summary=f"Create a new {model_name}",
         dependencies=[_auth_write],
     )
-    async def create(body: CreateCls, session: AsyncSession = Depends(_session)) -> Any:  # type: ignore[valid-type]
+    async def create(
+        body: CreateCls,  # type: ignore[valid-type]
+        session: AsyncSession = Depends(_session),
+        user: TokenUser = _auth_write,
+    ) -> Any:
         repo = get_repository(model_name, session)
         try:
             record = await repo.add(cast("Any", body).model_dump(exclude_none=False))
@@ -135,12 +156,18 @@ def _make_crud_router(model_name: str) -> APIRouter:
             await session.rollback()
             raise _constraint(exc) from exc
         await session.refresh(record)
-        return record
+        return _present(record, user, ReadCls)
+
+    # With relations declared the read endpoints answer with the expanded schema (the relations are
+    # optional and only present when ?include= asked for them); answering with the plain read schema
+    # dropped every embedded record.
+    ReadOrExpanded = ExpandedCls or ReadCls
 
     @router.get(
         "/",
-        response_model=list[ReadCls],  # type: ignore[valid-type]
+        response_model=list[ReadOrExpanded],  # type: ignore[valid-type]
         response_model_by_alias=True,
+        response_model_exclude_unset=True,
         summary=f"List {model_name} records",
         dependencies=[_auth_read],
     )
@@ -157,6 +184,7 @@ def _make_crud_router(model_name: str) -> APIRouter:
             ),
         ),
         session: AsyncSession = Depends(_session),
+        user: TokenUser = _auth_read,
     ) -> Any:
         repo = get_repository(model_name, session)
         incl = _parse_include(include)
@@ -169,14 +197,17 @@ def _make_crud_router(model_name: str) -> APIRouter:
             rows = await repo.list_expanded(
                 include=incl, criteria=criteria, limit=limit, offset=offset
             )
-            return [ExpandedCls.model_validate(r) for r in rows]
+            return _present([ExpandedCls.model_validate(r) for r in rows], user, ExpandedCls, incl)
 
-        return await repo.list(criteria=criteria, limit=limit, offset=offset)
+        return _present(
+            await repo.list(criteria=criteria, limit=limit, offset=offset), user, ReadCls
+        )
 
     @router.get(
         "/{record_id}",
-        response_model=ReadCls,
+        response_model=ReadOrExpanded,
         response_model_by_alias=True,
+        response_model_exclude_unset=True,
         summary=f"Get a {model_name} by ID",
         dependencies=[_auth_read],
     )
@@ -189,6 +220,7 @@ def _make_crud_router(model_name: str) -> APIRouter:
             ),
         ),
         session: AsyncSession = Depends(_session),
+        user: TokenUser = _auth_read,
     ) -> Any:
         repo = get_repository(model_name, session)
         incl = _parse_include(include)
@@ -197,17 +229,18 @@ def _make_crud_router(model_name: str) -> APIRouter:
             result = await repo.get_expanded(record_id, incl)
             if result is None:
                 raise HTTPException(status_code=404, detail=f"{model_name} '{record_id}' not found")
-            return ExpandedCls.model_validate(result)
+            return _present(ExpandedCls.model_validate(result), user, ExpandedCls, incl)
 
         record = await repo.get(record_id)
         if record is None:
             raise HTTPException(status_code=404, detail=f"{model_name} '{record_id}' not found")
-        return record
+        return _present(record, user, ReadCls)
 
     @router.patch(
         "/{record_id}",
         response_model=ReadCls,
         response_model_by_alias=True,
+        response_model_exclude_unset=True,
         summary=f"Partially update a {model_name}",
         dependencies=[_auth_write],
     )
@@ -215,6 +248,7 @@ def _make_crud_router(model_name: str) -> APIRouter:
         record_id: uuid.UUID,
         body: UpdateCls,  # type: ignore[valid-type]
         session: AsyncSession = Depends(_session),
+        user: TokenUser = _auth_write,
     ) -> Any:
         repo = get_repository(model_name, session)
         # a field the body names is changed, even to null; one it leaves out is not touched
@@ -233,7 +267,7 @@ def _make_crud_router(model_name: str) -> APIRouter:
             await session.rollback()
             raise _constraint(exc) from exc
         await session.refresh(record)
-        return record
+        return _present(record, user, ReadCls)
 
     @router.delete(
         "/{record_id}",
