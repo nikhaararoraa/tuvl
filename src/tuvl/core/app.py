@@ -1,3 +1,4 @@
+import asyncio
 import os
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -229,12 +230,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("tuvl is ready")
     yield
 
+    app.state.draining = True  # /ready answers 503 from here on, so the load balancer stops sending
     logger.info("tuvl shutting down")
     await _stop_runtime()
-    for _task_attr in ("workflow_scheduler", "webhook_dispatcher"):
-        _bg = getattr(app.state, _task_attr, None)
-        if _bg is not None and not _bg.done():
+    _background = [
+        _bg
+        for _task_attr in ("workflow_scheduler", "webhook_dispatcher")
+        if (_bg := getattr(app.state, _task_attr, None)) is not None
+    ]
+    for _bg in _background:
+        if not _bg.done():
             _bg.cancel()
+    await _asyncio.gather(*_background, return_exceptions=True)
 
     from tuvl import llm as _llm
     from tuvl.core.infra.http_client import aclose_all as _aclose_http_clients
@@ -324,12 +331,26 @@ async def root() -> RedirectResponse | dict[str, str]:
     return {"status": "ok", "service": settings.app_name}
 
 
-@app.get("/health", tags=["meta"], summary="Liveness probe", include_in_schema=_system_in_docs)
-async def health() -> dict[str, Any]:
+@app.get(
+    "/health",
+    tags=["meta"],
+    summary="Liveness probe",
+    include_in_schema=_system_in_docs,
+    response_model=None,
+)
+async def health() -> JSONResponse:
+    """Whether this process should be restarted: 503 only when the worker's poll loop is gone or stuck.
+    A database outage does not fail it (that is ``/ready``): restarting would not help."""
     from tuvl.core.models.requirements import MODEL_STATUS
+    from tuvl.runtime import host as host_module
     from tuvl.runtime.decision import health as decision_health
 
     report: dict[str, Any] = {"status": "healthy", "version": pkg_version("tuvl")}
+    host = host_module._HOST
+    if host is not None:
+        state = host.worker_state(settings.tuvl_worker_stall_seconds)
+        if state in ("stopped", "stalled"):
+            return JSONResponse({"status": "unhealthy", "worker": state}, status_code=503)
     models = decision_health()
     if models:
         report["decision_models"] = models
@@ -339,7 +360,42 @@ async def health() -> dict[str, Any]:
             name: (info if settings.tuvl_dev_mode else {"configured": info["configured"]})
             for name, info in MODEL_STATUS.items()
         }
-    return report
+    return JSONResponse(report)
+
+
+@app.get(
+    "/ready",
+    tags=["meta"],
+    summary="Readiness probe",
+    include_in_schema=_system_in_docs,
+    response_model=None,
+)
+async def ready() -> JSONResponse:
+    """Whether this process can serve requests now: the runtime is up, the primary database answers
+    within two seconds, and the process is not shutting down."""
+    from sqlalchemy import text
+
+    from tuvl.core.datasources import postgres
+    from tuvl.runtime import host as host_module
+
+    reasons: list[str] = []
+    if getattr(app.state, "draining", False):
+        reasons.append("shutting down")
+    engine = postgres._engines_rw.get(postgres.primary_ds_name())
+    if engine is not None:
+        if host_module._HOST is None:
+            reasons.append("the runtime has not started")
+        try:
+            async with asyncio.timeout(2.0), engine.connect() as conn:
+                await conn.execute(text("SELECT 1"))
+        except Exception:
+            reasons.append("the database does not answer")
+    if reasons:
+        body: dict[str, Any] = {"status": "unavailable"}
+        if settings.tuvl_dev_mode:
+            body["reasons"] = reasons
+        return JSONResponse(body, status_code=503)
+    return JSONResponse({"status": "ready"})
 
 
 @app.get(

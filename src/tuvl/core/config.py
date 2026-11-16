@@ -217,6 +217,8 @@ class Settings(BaseSettings):
     #: without HTTP triggers mattering (worker).
     tuvl_role: Literal["all", "api", "worker"] = "all"
     tuvl_worker_concurrency: int = 8
+    #: ``/health`` fails when the worker has made no poll attempt for this long (a hung loop, not a database outage)
+    tuvl_worker_stall_seconds: float = 300.0
 
     # OTLP collector endpoint (Jaeger, Grafana Tempo, etc.). The default protocol
     # is OTLP over HTTP (port 4318); "grpc" needs the ``tuvl[otel-grpc]`` extra.
