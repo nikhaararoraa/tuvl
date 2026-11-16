@@ -25,6 +25,8 @@ release below is the current one.
 - **`PATCH /models/{model}/{id}` can set a field to `null`.** `{"note": null}` was dropped like a field left out, so a nullable field could never be cleared. It now is; a field the body leaves out is still untouched, and `null` on a required field is `422`. **Behaviour change:** a client that sends `null` to mean "no change" now clears the field.
 - **A list of records pages in a stable order** (by primary key), so `offset` no longer repeats or skips rows.
 - **A write the database refuses answers `409` or `422`, not `500`.** A duplicate value on create or update, or deleting a record another refers to, is `409`; a missing required field is `422`. The answer says which constraint, not which values.
+- **`tuvl generate rls` applies on a 2.x database.** It listed `tuvl_system_workflow_instances`, a table that no longer exists, so the generated SQL failed. A test now keeps the hand-listed system tables real.
+- **A database role that ignores row-level security is reported.** A superuser, or a role with `BYPASSRLS`, skips every policy. In multi-tenant mode boot logs `rls.role_bypasses` as an error, and `tuvl verify rls` exits 1.
 
 ### Security
 
@@ -32,6 +34,7 @@ release below is the current one.
 - **`--auto-login` gives the dev key only to a browser on the machine that runs `tuvl dev`.** Insight's index page embedded the key for every request. It now does so only for a loopback client addressed as `localhost` or a loopback address; a browser on another machine, or a page that reaches the server through a DNS name, pastes the key.
 - **`--allow-host` (`TUVL_ALLOWED_HOSTS`) applies to every route of the dev server.** It guarded only `/dev/*`.
 - **`TUVL_ENV` is read case-insensitively everywhere.** `TUVL_ENV=Production` was treated as not production in some places (development documents loaded, boot checks only warned, `tuvl iam export` asked for no login). One `settings.is_production` now decides, and an unknown value is logged at boot.
+- **The `http` tool reads `${VAR}` only from the workflow's own text.** A `${VAR}` in a tool's `url` or `headers` used to be expanded after `{{ }}` input was rendered into it, so a value that arrived as input was read as an environment reference. The environment is now read first and input rendered second, the order `code.with` already used. The `tool_call` journal event and the error messages show the URL with `${VAR}` as written, never the value.
 - **The `http` tool reads `${VAR}` only from the workflow's own text.** A `${VAR}` in a tool's `url` or `headers` used to be expanded after `{{ }}` input was rendered into it, so a value that arrived as input was read as an environment reference. The environment is now read first and input rendered second, the order `code.with` already used. The `tool_call` journal event and the error messages show the URL with `${VAR}` as written, never the value.
 
 ---

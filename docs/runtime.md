@@ -172,7 +172,7 @@ run belongs to one tenant:
   tenant is refused (`MissingTenantContextError`) unless `TUVL_REQUIRE_TENANT_CONTEXT=false`.
 - **Workers execute a run under its tenant.** The tenant is bound while the run executes, so its
   `db` calls, logs, journal rows and child runs carry it, and the runtime engine sets
-  `app.current_tenant_id` for row-level security (`tuvl generate rls`).
+  `app.current_tenant_id` for row-level security (`tuvl generate rls`). Policies bind only a role that is neither a superuser nor `BYPASSRLS`: boot logs `rls.role_bypasses` as an error in multi-tenant mode when the engine's role is one, and `tuvl verify rls` fails.
 - **Callers reach only their own tenant's runs.** Reads, the event stream, export, pause/resume/abort,
   the run list and approvals are filtered by tenant, whatever scopes the caller holds, `iam:admin`
   and `runs:control` included. Another tenant's run answers `404`.
