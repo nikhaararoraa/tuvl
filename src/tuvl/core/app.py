@@ -81,6 +81,18 @@ async def _start_runtime(app: FastAPI) -> None:
 
         tools = await mount_mcp(app, host, _RUNTIME_STACK)
     host.start()
+    try:
+        for workflow, error_type, count in await host.stale_runs():
+            logger.warning(
+                "runtime.runs.will_fail",
+                workflow=workflow,
+                runs=count,
+                error_type=error_type,
+                hint="unfinished runs started on another version of this workflow fail when a worker "
+                "claims them; see Deploying a changed workflow in the runtime docs",
+            )
+    except Exception:
+        logger.warning("runtime.stale_runs_check_failed", exc_info=True)
     for name, reasons in host.unavailable().items():
         logger.error("runtime.workflow.unavailable", workflow=name, reasons=reasons)
     logger.info(

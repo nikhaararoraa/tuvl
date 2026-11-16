@@ -15,6 +15,7 @@ release below is the current one.
 ### Added
 
 - **`GET /ready`**, the readiness probe: `503` before the runtime has started, while the primary database does not answer, and during shutdown. `/health` now fails (`503`) when the worker's poll loop is gone or has made no attempt for `TUVL_WORKER_STALL_SECONDS` (300). The Helm chart's `readinessProbe` uses `/ready`; the `livenessProbe` stays on `/health`.
+- **Boot says how many unfinished runs a changed workflow will fail.** A run records a hash of its workflow; after a deploy that changes it, runs still queued, paused or waiting for a person fail with `workflow_changed` when claimed. The runtime now logs `runtime.runs.will_fail` per workflow with the count at boot, and `docs/runtime.md` has a runbook ("Deploying a changed workflow"). The behaviour itself is unchanged.
 
 ### Fixed
 
@@ -34,6 +35,7 @@ release below is the current one.
 - **`--auto-login` gives the dev key only to a browser on the machine that runs `tuvl dev`.** Insight's index page embedded the key for every request. It now does so only for a loopback client addressed as `localhost` or a loopback address; a browser on another machine, or a page that reaches the server through a DNS name, pastes the key.
 - **`--allow-host` (`TUVL_ALLOWED_HOSTS`) applies to every route of the dev server.** It guarded only `/dev/*`.
 - **`TUVL_ENV` is read case-insensitively everywhere.** `TUVL_ENV=Production` was treated as not production in some places (development documents loaded, boot checks only warned, `tuvl iam export` asked for no login). One `settings.is_production` now decides, and an unknown value is logged at boot.
+- **The `http` tool reads `${VAR}` only from the workflow's own text.** A `${VAR}` in a tool's `url` or `headers` used to be expanded after `{{ }}` input was rendered into it, so a value that arrived as input was read as an environment reference. The environment is now read first and input rendered second, the order `code.with` already used. The `tool_call` journal event and the error messages show the URL with `${VAR}` as written, never the value.
 - **The `http` tool reads `${VAR}` only from the workflow's own text.** A `${VAR}` in a tool's `url` or `headers` used to be expanded after `{{ }}` input was rendered into it, so a value that arrived as input was read as an environment reference. The environment is now read first and input rendered second, the order `code.with` already used. The `tool_call` journal event and the error messages show the URL with `${VAR}` as written, never the value.
 - **The `http` tool reads `${VAR}` only from the workflow's own text.** A `${VAR}` in a tool's `url` or `headers` used to be expanded after `{{ }}` input was rendered into it, so a value that arrived as input was read as an environment reference. The environment is now read first and input rendered second, the order `code.with` already used. The `tool_call` journal event and the error messages show the URL with `${VAR}` as written, never the value.
 
