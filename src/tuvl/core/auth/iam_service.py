@@ -37,7 +37,7 @@ from typing import Any
 
 import yaml as _yaml
 from fastapi.concurrency import run_in_threadpool
-from sqlalchemy import distinct, func, update
+from sqlalchemy import case, distinct, func, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import col, or_, select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -52,6 +52,7 @@ from tuvl.core.auth.models import (
     IAMUser,
     IAMUserRole,
 )
+from tuvl.core.auth.schemas import SCOPE_NAME_RE
 from tuvl.core.auth.token import mint_token
 from tuvl.core.config import settings
 from tuvl.core.logger import logger
@@ -66,7 +67,7 @@ from tuvl.core.logger import logger
 #   ConflictError          | 409
 #   AuthenticationError    | 401 (+ headers per call-site, see router.py)
 #   ForbiddenError         | 403
-#   ValidationError        | 400
+#   ValidationError        | 422 (400 on the federation admin routes)
 #   ParseError             | 422
 #   PersistenceError       | 500 (``.detail``)
 
@@ -127,12 +128,74 @@ UNSET: Any = _Unset()
 DUMMY_PW_HASH = get_password_hash("tuvl-login-timing-equaliser")
 
 
+# ── Input rules ────────────────────────────────────────────────────────────────
+
+PASSWORD_MIN_LENGTH = 8
+PASSWORD_MAX_BYTES = 72  # bcrypt ignores everything after 72 bytes
+#: Held by whoever creates the first administrator or seeds a fresh database, so two replicas booting
+#: (or two bootstrap calls) cannot each find the database empty. One key for every replica of one database.
+SEED_ADVISORY_KEY = 7_411_902_017
+
+
+def validate_password(password: str) -> None:
+    """The rule for every password a person sets: set-password links, admin-created users, the bootstrap
+    and seeded administrators, ``reset-admin``. bcrypt would cut anything past 72 bytes, so two different
+    long passwords could match."""
+    if len(password) < PASSWORD_MIN_LENGTH:
+        raise ValidationError(f"The password must be at least {PASSWORD_MIN_LENGTH} characters.")
+    if len(password.encode()) > PASSWORD_MAX_BYTES:
+        raise ValidationError(f"The password must be at most {PASSWORD_MAX_BYTES} bytes.")
+
+
+def validate_scope_name(name: str) -> str:
+    """*name* when a token can carry it; a scope the token minter would refuse is refused where it is written."""
+    if not SCOPE_NAME_RE.fullmatch(name):
+        raise ValidationError(
+            f"{name!r} is not a valid scope: use letters, digits and _ : . - / only (no spaces or *)."
+        )
+    return name
+
+
+def validate_role_name(name: str) -> str:
+    """*name* when a token can carry it as a group."""
+    if not SCOPE_NAME_RE.fullmatch(name):
+        raise ValidationError(
+            f"{name!r} is not a valid role name: use letters, digits and _ : . - / only (no spaces)."
+        )
+    return name
+
+
+def normalize_email(email: str) -> str:
+    """How an email is stored and compared: trimmed and lower case, so ``Ann@X.com`` and ``ann@x.com`` are one person."""
+    return email.strip().lower()
+
+
+def _first_line(exc: BaseException) -> str:
+    """The driver's own first line (the constraint). The rest can carry the failing row, password hash included."""
+    orig = getattr(exc, "orig", None) or exc
+    return (str(orig).splitlines() or [""])[0]
+
+
+async def _take_seed_lock(session: AsyncSession) -> None:
+    """Serialise with every other writer of the first administrator, until this transaction ends (PostgreSQL)."""
+    connection = await session.connection()
+    if connection.dialect.name == "postgresql":
+        await connection.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": SEED_ADVISORY_KEY})
+
+
 # ── Shared queries ─────────────────────────────────────────────────────────────
 
 
 async def get_user_by_login(session: AsyncSession, login_str: str) -> IAMUser | None:
+    """The user whose email (any case) or phone number is *login_str*.
+
+    A database that already holds two spellings of one email answers with the exact one first, then the oldest.
+    """
+    login = login_str.strip()
     result = await session.exec(
-        select(IAMUser).where(or_(IAMUser.email == login_str, IAMUser.phone_number == login_str))
+        select(IAMUser)
+        .where(or_(func.lower(IAMUser.email) == login.lower(), IAMUser.phone_number == login))
+        .order_by(case((col(IAMUser.email) == login, 0), else_=1), col(IAMUser.created_at))
     )
     return result.first()
 
@@ -184,11 +247,31 @@ async def load_role_scopes(session: AsyncSession, role_id: uuid.UUID) -> list[st
     return list(result.all())
 
 
+def _usable(user: IAMUser, kind: str, names: list[str]) -> list[str]:
+    """The *names* a token can carry. One stored before names were checked (``orders:*``) is left out and
+    logged, so it cannot stop every member of its role from signing in."""
+    kept: list[str] = []
+    for name in names:
+        if SCOPE_NAME_RE.fullmatch(name):
+            kept.append(name)
+        else:
+            logger.error(
+                "auth.token.invalid_entry_skipped",
+                kind=kind,
+                name=name,
+                user_id=str(user.id),
+                hint="remove it with `tuvl iam`",
+            )
+    return kept
+
+
 async def build_token_for_user(session: AsyncSession, user: IAMUser) -> str:
     """Assemble roles + scopes then mint an access token for *user*; a disabled role adds neither."""
     roles = await load_user_roles(session, user, active_only=True)
-    role_names = [r.name for r in roles]
-    scopes = await load_role_scopes_for_roles(session, [r.id for r in roles])
+    role_names = _usable(user, "group", [r.name for r in roles])
+    scopes = _usable(
+        user, "scope", await load_role_scopes_for_roles(session, [r.id for r in roles])
+    )
     ttl = settings.tuvl_token_ttl_seconds or None
     return mint_token(str(user.id), role_names, scopes, ttl_seconds=ttl)
 
@@ -272,6 +355,10 @@ async def bootstrap(
 ) -> str:
     """Create the first superadmin user. Raises :class:`ConflictError` if any
     user already exists."""
+    email = normalize_email(email)
+    validate_password(password)
+    validate_scope_name(admin_scope)
+    await _take_seed_lock(session)
     count_result = await session.exec(select(IAMUser))
     if count_result.first() is not None:
         raise ConflictError("Bootstrap is only available when no users exist.")
@@ -372,6 +459,11 @@ async def create_user(
     last_name: str | None = None,
     is_active: bool = True,
 ) -> tuple[IAMUser, list[str]]:
+    email = normalize_email(email)
+    if not email:
+        raise ValidationError("An email is required.")
+    if password:
+        validate_password(password)
     existing = await get_user_by_login(session, email)
     if existing is not None:
         raise ConflictError(f"User '{email}' already exists.")
@@ -394,7 +486,7 @@ async def create_user(
         # pre-check SELECT ran in a stale snapshot.  Surface as a conflict either way.
         if "unique" in str(exc.orig).lower() or "duplicate" in str(exc.orig).lower():
             raise ConflictError(f"User '{email}' already exists (database constraint).") from None
-        logger.error("iam.create_user.db_error", error=str(exc.orig), exc_info=True)
+        logger.error("iam.create_user.db_error", error=_first_line(exc))
         raise PersistenceError("Database error while creating user.") from None
     await session.refresh(user)
 
@@ -468,6 +560,8 @@ async def update_user(
     user = await get_user_by_id(session, user_id)
     if user is None:
         raise NotFoundError("User not found.")
+    if password is not UNSET and password is not None:
+        validate_password(password)
 
     before = await active_admin_count(session) if is_active is False else 0
     ends_sessions = False
@@ -498,8 +592,6 @@ async def update_user(
 
 PASSWORD_TOKEN_DEFAULT_HOURS = 72
 PASSWORD_TOKEN_MAX_HOURS = 24 * 30
-PASSWORD_MIN_LENGTH = 8
-PASSWORD_MAX_BYTES = 72  # bcrypt ignores everything after 72 bytes
 
 
 def _digest(raw_token: str) -> str:
@@ -541,10 +633,7 @@ async def issue_password_token(
 
 async def set_password_with_token(session: AsyncSession, raw_token: str, password: str) -> None:
     """Set the password of the user a token was issued for; the token works once."""
-    if len(password) < PASSWORD_MIN_LENGTH:
-        raise ValidationError(f"The password must be at least {PASSWORD_MIN_LENGTH} characters.")
-    if len(password.encode()) > PASSWORD_MAX_BYTES:
-        raise ValidationError(f"The password must be at most {PASSWORD_MAX_BYTES} bytes.")
+    validate_password(password)
     invalid = AuthenticationError("This link is not valid or has expired.")
     found = await session.exec(
         select(IAMPasswordToken).where(IAMPasswordToken.token_hash == _digest(raw_token))
@@ -579,7 +668,8 @@ async def create_role(
     description: str | None = None,
     scopes: list[str] | None = None,
 ) -> tuple[IAMRole, list[str]]:
-    scopes = scopes or []
+    scopes = [validate_scope_name(s) for s in scopes or []]
+    validate_role_name(name)
     result = await session.exec(select(IAMRole).where(IAMRole.name == name))
     if result.first() is not None:
         raise ConflictError(f"Role '{name}' already exists.")
@@ -640,6 +730,7 @@ async def update_role_scopes(
 ) -> tuple[IAMRole, list[str]]:
     """Atomically replace the full scope set for a role (delete-all then
     re-insert). An empty list removes all scopes."""
+    scopes = [validate_scope_name(s) for s in scopes]
     role = await get_role_by_id(session, role_id)
     if role is None:
         raise NotFoundError("Role not found.")
@@ -669,6 +760,7 @@ async def grant_scope(
     session: AsyncSession, role_id: uuid.UUID, scope: str
 ) -> tuple[IAMRole, list[str]]:
     """Add one scope to a role (idempotent). Holders get it at their next sign-in."""
+    validate_scope_name(scope)
     role = await get_role_by_id(session, role_id)
     if role is None:
         raise NotFoundError("Role not found.")
@@ -738,7 +830,18 @@ async def assign_role(session: AsyncSession, user_id: uuid.UUID, role_id: uuid.U
         return  # idempotent
 
     session.add(IAMUserRole(user_id=user_id, role_id=role_id))
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError:
+        # another request made the same assignment between the check above and this commit
+        await session.rollback()
+        again = await session.exec(
+            select(IAMUserRole).where(
+                IAMUserRole.user_id == user_id, IAMUserRole.role_id == role_id
+            )
+        )
+        if again.first() is None:
+            raise NotFoundError("User or role no longer exists.") from None
 
 
 async def revoke_role(session: AsyncSession, user_id: uuid.UUID, role_id: uuid.UUID) -> None:
@@ -847,6 +950,8 @@ async def reset_admin(
     sessions end. There is no authentication here: only code that already reaches the database
     (a shell in the cluster) can call it.
     """
+    email = normalize_email(email)
+    validate_password(password)
     role = await _ensure_superadmin_role(session, [ADMIN_SCOPE])
     user = await get_user_by_login(session, email)
     hashed = await aget_password_hash(password)

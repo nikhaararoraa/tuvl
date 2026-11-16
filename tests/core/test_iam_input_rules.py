@@ -226,7 +226,7 @@ async def test_rest_answers_422_for_a_bad_role_or_scope(rest) -> None:
     made = await rest("POST", "/auth/admin/roles", json={"name": "ops"})
     assert made.status_code == 201
     replaced = await rest(
-        "PUT", f"/auth/admin/roles/{made.json()['id']}/scopes", json={"scopes": ["orders:*"]}
+        "PATCH", f"/auth/admin/roles/{made.json()['id']}/scopes", json={"scopes": ["orders:*"]}
     )
     assert replaced.status_code == 422
 

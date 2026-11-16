@@ -170,6 +170,8 @@ async def bootstrap(req: BootstrapRequest, session: IamSession) -> TokenResponse
         )
     except ConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return TokenResponse(access_token=token)
 
 
@@ -327,6 +329,8 @@ async def create_user(
             last_name=req.last_name,
             is_active=req.is_active,
         )
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except PersistenceError as exc:
@@ -455,6 +459,8 @@ async def update_user(
             last_name=req.last_name,
             phone_number=req.phone_number,
         )
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ConflictError as exc:
@@ -485,6 +491,8 @@ async def create_role(
         role, scopes = await iam_service.create_role(
             session, name=req.name, description=req.description, scopes=req.scopes
         )
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -552,6 +560,8 @@ async def update_role_scopes(
     """
     try:
         role, scopes = await iam_service.update_role_scopes(session, role_id, req.scopes)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ConflictError as exc:
