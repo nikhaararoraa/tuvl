@@ -271,10 +271,12 @@ async def test_slow_runs_answer_202_then_finish(
 async def test_unhandled_errors_are_500_with_the_run_error(client: httpx.AsyncClient) -> None:
     resp = await client.post("/t/broken")
     assert resp.status_code == 500
-    assert (
-        resp.json()["error"]["error_type"] == "code_exception"
-        and "kaboom" in resp.json()["error"]["message"]
-    )
+    assert resp.json()["error"] == {
+        "error_type": "code_exception"
+    }  # an anonymous caller: the kind only
+    run = await client.get(f"/api/runs/{resp.headers['x-tuvl-run-id']}", headers=ADMIN)
+    assert run.json()["error"]["error_type"] == "code_exception"
+    assert "kaboom" in run.json()["error"]["message"]
 
 
 async def test_generic_start_without_waiting(client: httpx.AsyncClient, host: RuntimeHost) -> None:
