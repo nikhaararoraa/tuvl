@@ -101,7 +101,7 @@ These talk to a running server: `-u/--url` (`TUVL_URL`, default `http://localhos
 | `tuvl deploy` | `-d/--project-dir` | Coming soon: deploy to a hosted, managed tuvl engine that runs your backend services. Today it prints a message, deploys nothing and exits 1 |
 | `tuvl generate key` | `-w/--write`, `-f/--force` | A persistent Ed25519 key for signing access tokens (`TUVL_SIGNING_KEY`) |
 | `tuvl generate rls` | `-o/--out` | Idempotent row-level-security SQL for tenant-scoped tables |
-| `tuvl verify rls` | | Exit 1 if a tenant-scoped table lacks its RLS policy |
+| `tuvl verify rls` | | Exit 1 if a tenant-scoped table lacks its RLS policy, or if the database role is a superuser or has `BYPASSRLS` (it ignores every policy) |
 
 ### Extras: what an image installs
 

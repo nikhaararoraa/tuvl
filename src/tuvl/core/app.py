@@ -188,6 +188,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             os.kill(parent, _signal.SIGTERM)
         os._exit(1)
 
+    from tuvl.core.datasources.rls import warn_if_role_bypasses_rls
+
+    await warn_if_role_bypasses_rls()
+
     logger.info("Syncing model versions to DB")
     from tuvl.core.models.model_version import sync_model_versions
 
