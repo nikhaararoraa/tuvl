@@ -93,16 +93,16 @@ async def test_the_claim_does_not_sort_the_backlog(seeded: AsyncEngine) -> None:
         await s.rollback()
     event.remove(seeded.sync_engine, "before_cursor_execute", record)
     assert sent
-    plans = []
+    plans: dict[bool, str] = {}
     async with seeded.connect() as conn:
         await conn.exec_driver_sql("SET enable_seqscan = off")
         for statement, parameters in sent:
             rows = await conn.exec_driver_sql("EXPLAIN " + statement, parameters)
-            plans.append("\n".join(r[0] for r in rows))
+            plans["queued" in str(parameters)] = "\n".join(r[0] for r in rows)
         await conn.rollback()
-    joined = "\n".join(plans)
-    assert "ix_tuvl_runs_queued_created" in joined
-    assert "Sort" not in joined.replace("Sort Key", "").replace("Presorted", "")
+    queued = plans[True]  # the statement that takes queued runs
+    assert "ix_tuvl_runs_queued_created" in queued
+    assert "Sort" not in queued.replace("Sort Key", "").replace("Presorted", "")
 
 
 async def test_a_principals_list_uses_its_index(seeded: AsyncEngine) -> None:
