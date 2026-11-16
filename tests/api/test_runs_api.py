@@ -622,9 +622,13 @@ async def test_export_is_a_replayable_journal(client: httpx.AsyncClient) -> None
     run_id = (await client.post("/t/greet", json={"name": "ada"}, headers=ALICE)).headers[
         "x-tuvl-run-id"
     ]
+    stranger = token("eve", ["greet:run"])
+    assert (
+        await client.get(f"/api/runs/{run_id}/export", headers=stranger)
+    ).status_code == 404  # not theirs, and no runs:read
     assert (
         await client.get(f"/api/runs/{run_id}/export", headers=MANAGER)
-    ).status_code == 404  # not theirs
+    ).status_code == 200  # runs:read reads any run
     exported = (await client.get(f"/api/runs/{run_id}/export", headers=ALICE)).json()
     assert exported["format"] == "tuvl.journal/v1" and exported["run"]["workflow"] == "greet"
     assert [c["agent_id"] for c in exported["checkpoints"]] == ["greet"]
