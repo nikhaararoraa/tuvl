@@ -140,7 +140,9 @@ tool:
 `GET`/`HEAD` are `read`; other methods are `write` (override to `destructive` allowed). Without
 `map`, a single output receives the body. An unexpected status emits `http_<status>` when that
 signal is routed; otherwise `error` (`rate_limit` for 429 and `transient` for 5xx are retryable,
-`http_error` otherwise). `${VAR}` reads the environment.
+`http_error` otherwise). `${VAR}` in `url` and `headers` reads the environment from the workflow's own text; a value that
+arrives through `{{ }}` is data and is never read as a reference. The journal and error messages show the URL with `${VAR}`
+as written, not the value.
 
 ### `use: storage`
 

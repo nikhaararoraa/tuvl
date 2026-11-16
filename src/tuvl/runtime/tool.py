@@ -192,16 +192,19 @@ async def _http(agent: Any, view: dict[str, Any], ctx: EngineContext) -> AgentRe
 
     tool = agent.tool
     where = f"agent '{agent.id}'"
-    url = _env(str(render(tool.url, view)), f"{where} url")
+    # ${VAR} is read from the workflow's own text, before any input is rendered into it: a value
+    # that arrives through {{ }} is data and must never be read as an environment reference.
+    url = str(render(_env(tool.url, f"{where} url"), view))
+    shown = str(render(tool.url, view))  # what the journal and errors say: ${VAR} left as written
     headers = {
-        k: _env(str(render(v, view)), f"{where} header '{k}'") for k, v in tool.headers.items()
+        k: str(render(_env(v, f"{where} header '{k}'"), view)) for k, v in tool.headers.items()
     }
     if tool.idempotency == "auto" and tool.method in _UNSAFE_METHODS:
         headers.setdefault("Idempotency-Key", ctx.idempotency_key)
     query = {k: v for k, v in jsonable(render(tool.query, view)).items() if v is not None}
     body = jsonable(render(tool.body, view))
 
-    await ctx.emit("tool_call", payload={"use": "http", "method": tool.method, "url": url})
+    await ctx.emit("tool_call", payload={"use": "http", "method": tool.method, "url": shown})
     try:
         response = await get_http_client().request(
             tool.method,
@@ -211,9 +214,12 @@ async def _http(agent: Any, view: dict[str, Any], ctx: EngineContext) -> AgentRe
             json=body if body is not None else None,
         )
     except httpx.TimeoutException as exc:
-        raise EngineError("timeout", f"{tool.method} {url}: {type(exc).__name__}") from exc
+        raise EngineError("timeout", f"{tool.method} {shown}: {type(exc).__name__}") from exc
     except httpx.HTTPError as exc:
-        raise EngineError("transient", f"{tool.method} {url}: {type(exc).__name__}: {exc}") from exc
+        reason = str(exc).replace(url, shown)
+        raise EngineError(
+            "transient", f"{tool.method} {shown}: {type(exc).__name__}: {reason}"
+        ) from exc
 
     try:
         parsed: Any = response.json() if response.content else None
@@ -243,7 +249,7 @@ async def _http(agent: Any, view: dict[str, Any], ctx: EngineContext) -> AgentRe
         return AgentResult(
             "error",
             error_type=error_type,
-            message=f"{tool.method} {url} returned {response.status_code}",
+            message=f"{tool.method} {shown} returned {response.status_code}",
             detail=detail,
         )
     return AgentResult("default", outputs=_map(agent, tool, data, "default"), detail=detail)

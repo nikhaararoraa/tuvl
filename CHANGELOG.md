@@ -10,6 +10,14 @@ release below is the current one.
 
 ---
 
+## [Unreleased]
+
+### Security
+
+- **The `http` tool reads `${VAR}` only from the workflow's own text.** A `${VAR}` in a tool's `url` or `headers` used to be expanded after `{{ }}` input was rendered into it, so a value that arrived as input was read as an environment reference. The environment is now read first and input rendered second, the order `code.with` already used. The `tool_call` journal event and the error messages show the URL with `${VAR}` as written, never the value.
+
+---
+
 ## [2.1.0-beta.5] — 2026-11-14
 
 **Set-password links, `${VAR}` in a code agent's `with:`, and `tuvl deploy` for the web UI.** `tuvl` and `tuvl-insight` release together as `2.1.0b5`.
