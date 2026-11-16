@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 
 from tuvl import llm
-from tuvl.core.config import settings
 
 
 @pytest.fixture
@@ -25,12 +24,21 @@ def captured(monkeypatch):
 
 
 async def test_by_default_there_is_no_cap(captured, monkeypatch) -> None:
-    monkeypatch.setattr(settings, "tuvl_llm_max_connections", None)
+    monkeypatch.delenv("TUVL_LLM_MAX_CONNECTIONS", raising=False)
     llm._client()
     assert captured["limits"].max_connections is None
 
 
 async def test_an_operator_can_cap_the_connections(captured, monkeypatch) -> None:
-    monkeypatch.setattr(settings, "tuvl_llm_max_connections", 64)
+    monkeypatch.setenv("TUVL_LLM_MAX_CONNECTIONS", "64")
     llm._client()
     assert captured["limits"].max_connections == 64
+
+
+@pytest.mark.parametrize("raw", ["", "0", "-3", "many"])
+async def test_a_value_that_is_not_a_positive_number_means_no_cap(
+    captured, monkeypatch, raw
+) -> None:
+    monkeypatch.setenv("TUVL_LLM_MAX_CONNECTIONS", raw)
+    llm._client()
+    assert captured["limits"].max_connections is None

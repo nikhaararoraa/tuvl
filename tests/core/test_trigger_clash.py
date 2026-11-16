@@ -41,7 +41,7 @@ def test_in_production_a_path_clash_stops_the_boot(monkeypatch) -> None:
     monkeypatch.setattr(settings, "tuvl_dev_mode", False)
     monkeypatch.setattr(settings, "tuvl_env", "production")
     app = FastAPI()
-    with pytest.raises(RuntimeError, match=r"POST /orders.*\bb\b"):
+    with pytest.raises(RuntimeError, match=r"'b'.*POST /orders"):
         mount_triggers(app, {"a": workflow("a"), "b": workflow("b")})
 
 
