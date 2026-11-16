@@ -296,6 +296,13 @@ class HttpTool(_Strict):
     expect: HttpExpect = HttpExpect()
     map: dict[str, str] = Field(default={}, description="Declared output key → response path.")
     idempotency: Literal["auto", "none"] = "none"
+    allow_private: bool = Field(
+        default=False,
+        description=(
+            "Let a host that arrives through {{ }} be a loopback, private or link-local address. "
+            "A host written in the url is trusted and needs no flag; the cloud-metadata address is refused either way."
+        ),
+    )
 
     @model_validator(mode="after")
     def _no_body_on_safe_methods(self) -> HttpTool:
