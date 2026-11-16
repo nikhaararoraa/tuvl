@@ -257,8 +257,9 @@ def test_export_writes_a_role_seed_the_loader_accepts(db, monkeypatch, tmp_path)
 
 
 @pytest.mark.requires_insight
-def test_export_in_production_asks_for_the_login(db, monkeypatch):
-    monkeypatch.setattr(settings, "tuvl_env", "production")
+@pytest.mark.parametrize("value", ["production", "Production", " PRODUCTION "])
+def test_export_in_production_asks_for_the_login(db, monkeypatch, value):
+    monkeypatch.setattr(settings, "tuvl_env", value)
     assert (
         runner.invoke(app, ["iam", "export"], env={"TUVL_IAM_EMAIL": ADMIN}, input="\n").exit_code
         == 1
