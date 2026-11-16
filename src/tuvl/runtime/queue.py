@@ -38,6 +38,8 @@ HEARTBEAT_SECONDS = 10.0
 POLL_SECONDS = 1.0
 
 _RUNS = SystemRun.__table__  # type: ignore[attr-defined]
+#: Statuses a worker holds a lease in; ``compensating`` is a run undoing its completed agents.
+_LEASED = ("running", "compensating")
 #: Statuses a resume or retry may move back to ``queued``.
 _RESUMABLE = frozenset({"waiting_human", "waiting_approval", "paused"})
 
@@ -171,7 +173,7 @@ async def claim(
     The caller commits."""
     claimable = sa.or_(
         _RUNS.c.status == "queued",
-        sa.and_(_RUNS.c.status == "running", _RUNS.c.lease_expires_at < _now(session)),
+        sa.and_(_RUNS.c.status.in_(_LEASED), _RUNS.c.lease_expires_at < _now(session)),
     )
     pick = sa.select(_RUNS.c.id).where(claimable)
     if run_id is not None:
@@ -182,7 +184,8 @@ async def claim(
         sa.update(_RUNS)
         .where(_RUNS.c.id.in_(pick))
         .values(
-            status="running",
+            # a run found half way through compensation goes on compensating, it does not start over
+            status=sa.case((_RUNS.c.status == "compensating", "compensating"), else_="running"),
             lease_owner=owner,
             lease_expires_at=_later(session, lease_seconds),
             claims=_RUNS.c.claims + 1,
@@ -202,7 +205,7 @@ async def heartbeat(
     result = await _execute(
         session,
         sa.update(_RUNS)
-        .where(_RUNS.c.id == run_id, _RUNS.c.lease_owner == owner, _RUNS.c.status == "running")
+        .where(_RUNS.c.id == run_id, _RUNS.c.lease_owner == owner, _RUNS.c.status.in_(_LEASED))
         .values(lease_expires_at=_later(session, lease_seconds), updated_at=_now(session)),
     )
     return bool(result.rowcount)
@@ -225,7 +228,7 @@ async def release(
     result = await _execute(
         session,
         sa.update(_RUNS)
-        .where(_RUNS.c.id == run_id, _RUNS.c.lease_owner == owner, _RUNS.c.status == "running")
+        .where(_RUNS.c.id == run_id, _RUNS.c.lease_owner == owner, _RUNS.c.status.in_(_LEASED))
         .values(**values),
     )
     wakeup.mark(session, run_id)
@@ -462,6 +465,6 @@ async def wait_settled(engine: AsyncEngine, run_id: uuid.UUID, timeout_seconds: 
     while time.monotonic() < deadline:
         async with AsyncSession(engine) as s:
             run = await s.get(SystemRun, run_id)
-        if run is None or run.status not in ("queued", "running"):
+        if run is None or run.status not in ("queued", "running", "compensating"):
             return
         await asyncio.sleep(0.02)

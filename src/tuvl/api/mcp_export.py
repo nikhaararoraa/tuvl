@@ -205,7 +205,10 @@ def build_server() -> Server[Any, Any]:
         while True:
             cursor = await _progress(server, host, run_id, cursor)
             run = await host.get(run_id)
-            if run.status not in ("queued", "running") or waited >= CALL_WINDOW_SECONDS:
+            if (
+                run.status not in ("queued", "running", "compensating")
+                or waited >= CALL_WINDOW_SECONDS
+            ):
                 break
             await asyncio.sleep(_POLL_SECONDS)
             waited += _POLL_SECONDS
