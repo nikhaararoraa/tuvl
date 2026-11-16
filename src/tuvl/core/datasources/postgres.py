@@ -206,6 +206,7 @@ def _build_engines() -> None:
         _engines_rw[ds_name] = create_async_engine(
             rw_dsn,
             echo=False,
+            hide_parameters=True,  # an error must not carry the row's values
             pool_pre_ping=True,
             connect_args=connect_args,
             **pool_kwargs,
@@ -213,6 +214,7 @@ def _build_engines() -> None:
         _engines_ro[ds_name] = create_async_engine(
             ro_dsn,
             echo=False,
+            hide_parameters=True,
             pool_pre_ping=True,
             connect_args=connect_args,
             **pool_kwargs,

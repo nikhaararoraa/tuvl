@@ -229,6 +229,8 @@ class Settings(BaseSettings):
     #: Whether a run's error text goes to an anonymous caller (no token, public trigger). Unset: only in dev
     #: mode; otherwise the caller gets the error type and the run id, and the text stays in the journal.
     tuvl_expose_errors: bool | None = None
+    #: Largest response body (bytes) a ``tool: http`` step reads; a larger one ends the step with ``too_large``.
+    tuvl_http_tool_max_bytes: int = 10 * 1024 * 1024
 
     # OTLP collector endpoint (Jaeger, Grafana Tempo, etc.). The default protocol
     # is OTLP over HTTP (port 4318); "grpc" needs the ``tuvl[otel-grpc]`` extra.

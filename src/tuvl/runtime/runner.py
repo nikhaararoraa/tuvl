@@ -969,13 +969,25 @@ class Runner:
         except Exception as exc:
             logger.exception("runtime.engine.raised", agent=agent.id, engine=agent.engine)
             kind = "code_exception" if agent.engine == "code" else f"{agent.engine}_error"
-            result = AgentResult("error", error_type=kind, message=f"{type(exc).__name__}: {exc}")
+            result = AgentResult("error", error_type=kind, message=exception_message(exc))
         finally:
             if ctx.stream is not None:
                 await ctx.stream.close()
         if judge_tokens[0]:
             result.tokens += judge_tokens[0]
         return result, session
+
+
+def exception_message(exc: Exception) -> str:
+    """The text a run records for an exception. A database error carries the statement and its
+    parameters, which can hold other people's data: keep the driver's first line, the constraint
+    and not the values."""
+    from sqlalchemy.exc import DBAPIError
+
+    if isinstance(exc, DBAPIError) and exc.orig is not None:
+        first = (str(exc.orig).splitlines() or [""])[0]
+        return f"{type(exc).__name__}: {first}"
+    return f"{type(exc).__name__}: {exc}"
 
 
 def _retry_kind(result: AgentResult) -> str | None:

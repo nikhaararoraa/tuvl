@@ -144,6 +144,13 @@ signal is routed; otherwise `error` (`rate_limit` for 429 and `transient` for 5x
 arrives through `{{ }}` is data and is never read as a reference. The journal and error messages show the URL with `${VAR}`
 as written, not the value.
 
+`url` may carry a query string; `query:` is added to it. A **host written in the `url`** is trusted, so an in-cluster
+service (`http://orders.internal:8080/…`) is a fine target. A **host that arrives through `{{ }}`** (a caller or a model
+chose it) must resolve to a public address, and the request goes to the address that was checked; `allow_private: true`
+admits loopback, private and link-local ones for that host. The cloud-metadata address (`169.254.169.254` and its kin) is
+refused either way, with `destination_refused`. The response is read up to `TUVL_HTTP_TOOL_MAX_BYTES` (10 MiB); a larger
+one ends the step with `too_large` (route that signal, or it is an `error`).
+
 ### `use: storage`
 
 ```yaml
