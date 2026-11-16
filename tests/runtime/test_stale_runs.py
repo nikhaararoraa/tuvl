@@ -73,4 +73,3 @@ async def test_nothing_is_stale_when_every_unfinished_run_is_on_the_current_vers
     await start(pg_engine, "current", workflow_hash(current), "waiting_human")
     host = RuntimeHost(pg_engine, workflows={"current": current})
     assert await host.stale_runs() == []
-

@@ -125,6 +125,21 @@ with zero tokens, and `tuvl replay runs <fixture>` fails if the end or output di
 runner between agents and loop iterations, under the run's lock, so it works across workers. In dev
 mode, Insight breakpoints and step mode pause runs through the same mechanism.
 
+## Deploying a changed workflow
+
+A run records a hash of its workflow when it starts. After a deploy that changes that workflow, every run
+that is still **queued, paused or waiting for a person** fails with `workflow_changed` the next time a worker
+claims it (`workflow_not_found` when the workflow is gone), and compensation does not run: the run cannot be
+loaded. A synchronous request that finishes within its `sync_timeout` is not affected.
+
+At boot the runtime logs `runtime.runs.will_fail` for each workflow with such runs, with their number, so a
+deploy that would fail waiting approvals is visible before anyone is told. To avoid losing them:
+
+- let the waiting runs finish, or decide or abort them, before deploying the change;
+- or ship the change as a new workflow (a new name and trigger path) and leave the old one in place until its
+  runs have ended;
+- or accept it: the failed run keeps its journal and error, and the caller starts it again.
+
 ## Production server and shutdown
 
 `tuvl serve app` starts uvicorn and *replaces* the `tuvl` process with it, so in a

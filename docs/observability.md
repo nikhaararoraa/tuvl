@@ -82,6 +82,7 @@ tuvl logs with structlog: JSON lines in production, a readable console format in
 | `runtime.sweep.failed` | error | a housekeeping sweep raised; it is skipped |
 | `runtime.worker.ended` | error | the poll loop ended unexpectedly; `/health` answers 503 |
 | `scheduler.schedule_dropped` | error | a schedule that cannot advance is no longer fired; the others go on |
+| `runtime.runs.will_fail` | warning | at boot: `workflow`, `runs`, `error_type`: unfinished runs of a workflow that changed (or is gone) since they started |
 | `runtime.pause_ignored` | warning | pause requested on a `per_run` transaction |
 | `decide.shadow_model_failed` | warning | `agent`, `error` (shadow failures never fail the run) |
 | `decision.provider.load_failed` | warning | a decision provider entry point failed to load |

@@ -146,6 +146,42 @@ class RuntimeHost:
             ) from exc
         return model.model_dump(mode="json", by_alias=True)
 
+    async def stale_runs(self) -> list[tuple[str, str, int]]:
+        """Unfinished runs whose workflow is no longer the one they started on, as ``(workflow, error_type,
+        count)``: each fails with ``workflow_changed`` (or ``workflow_not_found`` when the workflow is gone)
+        the next time a worker claims it."""
+        import sqlalchemy as sa
+
+        runs = queue._RUNS
+        unfinished = (
+            "queued",
+            "running",
+            "waiting_human",
+            "waiting_approval",
+            "paused",
+            "compensating",
+        )
+        async with AsyncSession(self.engine) as s:
+            rows = (
+                await queue._execute(
+                    s,
+                    sa.select(runs.c.workflow, runs.c.workflow_hash, sa.func.count())
+                    .where(runs.c.status.in_(unfinished))
+                    .group_by(runs.c.workflow, runs.c.workflow_hash),
+                )
+            ).all()
+        current = {name: workflow_hash(doc) for name, doc in self.registry().items()}
+        counts: dict[tuple[str, str], int] = {}
+        for workflow, digest, n in rows:
+            if workflow not in current:
+                key = (workflow, "workflow_not_found")
+            elif digest != current[workflow]:
+                key = (workflow, "workflow_changed")
+            else:
+                continue
+            counts[key] = counts.get(key, 0) + int(n)
+        return [(workflow, error, n) for (workflow, error), n in sorted(counts.items())]
+
     def unavailable(self) -> dict[str, list[str]]:
         """Workflows that cannot run now, with the reasons."""
         out: dict[str, list[str]] = {}
