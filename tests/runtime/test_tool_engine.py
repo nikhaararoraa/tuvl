@@ -3,6 +3,7 @@ mcp against a real stdio MCP server — all driven by the runner."""
 
 from __future__ import annotations
 
+import json
 import sys
 import textwrap
 from pathlib import Path
@@ -343,6 +344,57 @@ async def test_missing_env_var_is_an_error(db: AsyncEngine, http: list[httpx.Req
         {"default": {}, "failed": {"status": 500}},
     )
     assert (await execute(db, doc, {})).end_name == "failed" and http == []
+
+
+def _echo_agent(**tool: Any) -> dict[str, Any]:
+    return tool_agent(
+        {"use": "http", "method": "GET", **tool},
+        {"default": "END", "error": "END.failed"},
+    )
+
+
+async def test_http_input_is_never_read_as_an_environment_reference(
+    db: AsyncEngine, http: list[httpx.Request]
+) -> None:
+    doc = workflow(
+        _echo_agent(url="https://pay.test/items/{{ note }}", headers={"X-Note": "{{ note }}"}),
+        {"note": "str"},
+        HTTP_ENDS,
+    )
+    await execute(db, doc, {"note": "${PAY_KEY}"})
+    assert http[0].url.path == "/items/${PAY_KEY}"
+    assert http[0].headers["X-Note"] == "${PAY_KEY}"
+
+
+async def test_http_static_environment_references_still_expand(
+    db: AsyncEngine, http: list[httpx.Request]
+) -> None:
+    doc = workflow(
+        _echo_agent(
+            url="https://pay.test/bot${PAY_KEY}/send/{{ who }}",
+            headers={"Authorization": "Bearer ${PAY_KEY}", "X-Who": "{{ who }}"},
+        ),
+        {"who": "str"},
+        HTTP_ENDS,
+    )
+    await execute(db, doc, {"who": "ann"})
+    assert http[0].url.path == "/botsk_test/send/ann"
+    assert http[0].headers["Authorization"] == "Bearer sk_test"
+    assert http[0].headers["X-Who"] == "ann"
+
+
+async def test_http_journal_and_errors_do_not_hold_the_expanded_value(
+    db: AsyncEngine, http: list[httpx.Request]
+) -> None:
+    doc = workflow(_echo_agent(url="https://pay.test/down/${PAY_KEY}"), {}, HTTP_ENDS)
+    run = await execute(db, doc, {})
+    assert http[0].url.path == "/down/sk_test"
+    async with AsyncSession(db) as s:
+        events = await journal.events(s, run.id)
+    assert "sk_test" not in json.dumps([e.payload for e in events])
+    call = next(e for e in events if e.type == "tool_call")
+    assert call.payload["url"] == "https://pay.test/down/${PAY_KEY}"
+    assert "sk_test" not in json.dumps(run.error or {})
 
 
 # ── mcp ─────────────────────────────────────────────────────────────────────
