@@ -289,9 +289,9 @@ The entire IAM surface — bootstrap, login, session lifecycle, user/role CRUD, 
 
 What the dev key does:
 
-- **Gates the dev surfaces.** `/dev/*` (the dev API Insight uses: project files, validate, codegen, specs, dev runs, breakpoints, judges) is mounted only in dev mode and guarded by a pure-ASGI middleware (`tuvl/core/dev/middleware.py`) enforcing an IP allowlist plus the dev key as bearer token. An unset key fails closed — an empty key never authenticates. Breakpoints, step mode and context editing exist only there.
+- **Gates the dev surfaces.** `/dev/*` (the dev API Insight uses: project files, validate, codegen, specs, dev runs, breakpoints, judges) is mounted only in dev mode and guarded by a pure-ASGI middleware (`tuvl/core/dev/middleware.py`) enforcing an IP allowlist plus the dev key as bearer token. `--allow-host` (`TUVL_ALLOWED_HOSTS`) applies to every route of the dev server, not only `/dev/*`. An unset key fails closed — an empty key never authenticates. Breakpoints, step mode and context editing exist only there.
 - **Acts as a superuser credential.** In dev mode, `verify_token` accepts the raw dev key — compared with `hmac.compare_digest` — and map it to synthetic claims for user `dev`, group `dev`, scope `iam:admin`, minted once per process. The same key therefore works for `/dev/*`, `/auth/admin/*`, and every scoped route.
-- **`--auto-login`** sets `TUVL_DEV_AUTO_LOGIN=1`, which makes the Insight index page embed the key in a `<meta name="tuvl-dev-key">` tag so the UI skips its security screen. Off by default.
+- **`--auto-login`** sets `TUVL_DEV_AUTO_LOGIN=1`, which makes the Insight index page embed the key in a `<meta name="tuvl-dev-key">` tag so the UI skips its security screen. Off by default. The key is embedded only when the request comes from this machine (a loopback client address) and is addressed as `localhost` or by a loopback address; a browser on another machine, or a page that reaches the server through a DNS name, pastes the key instead.
 
 Two boot-time refusals in `tuvl/core/auth/access.py` keep the shortcut out of production: `TUVL_DEV_MODE=true` with `TUVL_ENV=production` aborts the process unconditionally, and outside production dev mode still requires the explicit `TUVL_ALLOW_DEV_AUTH=true` acknowledgement (which `tuvl dev` sets for you).
 

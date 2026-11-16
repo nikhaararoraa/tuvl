@@ -17,7 +17,7 @@ from tuvl.core.auth.roles_router import roles_router
 from tuvl.core.auth.router import iam_router
 from tuvl.core.auth.router import router as auth_router
 from tuvl.core.bootstrap import run_pre_flight
-from tuvl.core.config import settings
+from tuvl.core.config import KNOWN_ENVS, settings
 from tuvl.core.config_loader import load_all_configs
 from tuvl.core.cors import install_cors
 from tuvl.core.datasources.loader import DATASOURCE_REGISTRY
@@ -37,7 +37,7 @@ if settings.tuvl_dev_mode:
     from tuvl.core.dev.extensions import mount_dev_extensions
     from tuvl.core.dev.middleware import DevMiddleware
 
-if not settings.tuvl_dev_mode and settings.tuvl_allowed_hosts:
+if settings.tuvl_allowed_hosts:
     from tuvl.core.access_control import AllowedHostsMiddleware
 
 
@@ -113,6 +113,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         project=settings.project_dir,
         db=f"{settings.postgres_host}:{settings.postgres_port}/{settings.postgres_db}",
     )
+    if not settings.env_is_known:
+        logger.warning(
+            "settings.unknown_env",
+            value=settings.tuvl_env,
+            known=list(KNOWN_ENVS),
+            consequence="treated as not production: development documents load and boot checks only warn",
+        )
     init_telemetry()
     reconfigure_third_party_logging()
 
@@ -124,7 +131,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     get_key_manager()
 
     logger.info("Loading all configurations")
-    load_all_configs(include_dev_documents=settings.tuvl_env != "production")
+    load_all_configs(include_dev_documents=not settings.is_production)
 
     # Integrity-pinned external artifact sources (config.yaml artifact_sources).
     from tuvl.core.artifacts.external import load_external_artifacts
@@ -142,12 +149,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Fail fast on models the workflows use but the environment can't serve.
     from tuvl.core.models.requirements import check_at_boot
 
-    check_at_boot(production=settings.tuvl_env == "production")
+    check_at_boot(production=settings.is_production)
 
     # ... and on the variables the project's EnvConfig declares required.
     from tuvl.core import envconfig
 
-    envconfig.check_at_boot(production=settings.tuvl_env == "production")
+    envconfig.check_at_boot(production=settings.is_production)
 
     logger.info("Running deployment mode pre-flight check")
     await run_pre_flight()
@@ -292,7 +299,7 @@ for _group, _router in (
 logger.info("API groups mounted", groups=sorted(_exposed), docs=_docs_mode)
 
 
-if not settings.tuvl_dev_mode and settings.tuvl_allowed_hosts:
+if settings.tuvl_allowed_hosts:
     app.add_middleware(AllowedHostsMiddleware)
     logger.info("IP allowlist active", allowed_hosts=settings.tuvl_allowed_hosts)
 

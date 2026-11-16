@@ -15,6 +15,9 @@ release below is the current one.
 ### Security
 
 - **The `http` tool reads `${VAR}` only from the workflow's own text.** A `${VAR}` in a tool's `url` or `headers` used to be expanded after `{{ }}` input was rendered into it, so a value that arrived as input was read as an environment reference. The environment is now read first and input rendered second, the order `code.with` already used. The `tool_call` journal event and the error messages show the URL with `${VAR}` as written, never the value.
+- **`--auto-login` gives the dev key only to a browser on the machine that runs `tuvl dev`.** Insight's index page embedded the key for every request. It now does so only for a loopback client addressed as `localhost` or a loopback address; a browser on another machine, or a page that reaches the server through a DNS name, pastes the key.
+- **`--allow-host` (`TUVL_ALLOWED_HOSTS`) applies to every route of the dev server.** It guarded only `/dev/*`.
+- **`TUVL_ENV` is read case-insensitively everywhere.** `TUVL_ENV=Production` was treated as not production in some places (development documents loaded, boot checks only warned, `tuvl iam export` asked for no login). One `settings.is_production` now decides, and an unknown value is logged at boot.
 
 ---
 

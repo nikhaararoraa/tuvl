@@ -50,7 +50,7 @@ def _enforce_dev_mode_sentinel() -> None:
         return
 
     # Layer 1: production + dev_mode is *never* allowed, ack flag or not.
-    if _settings.tuvl_env.strip().lower() == "production":
+    if _settings.is_production:
         _auth_logger.critical(
             "🚨 TUVL_DEV_MODE=true is set in a TUVL_ENV=production process. "
             "The dev-mode auth shortcut grants iam:admin to anyone with "
