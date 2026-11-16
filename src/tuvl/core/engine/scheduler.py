@@ -211,20 +211,39 @@ async def scheduler_loop() -> None:
     logger.info("scheduler.started", schedules=schedules)
 
     now = datetime.now(UTC)
-    iterators = {name: CronSim(expr, now) for name, expr in schedules.items()}
-    next_fire = {name: next(it) for name, it in iterators.items()}
+    iterators: dict[str, CronSim] = {}
+    next_fire: dict[str, datetime] = {}
+    for name, expr in schedules.items():
+        try:
+            iterators[name] = CronSim(expr, now)
+            next_fire[name] = next(iterators[name])
+        except Exception:  # an expression that never matches must not stop the other schedules
+            logger.exception("scheduler.schedule_dropped", workflow=name, cron=expr)
 
-    while True:
-        soonest = min(next_fire.values())
-        delay = (soonest - datetime.now(UTC)).total_seconds()
-        if delay > 0:
-            await asyncio.sleep(delay)
+    while next_fire:
+        try:
+            await _wait_and_fire(iterators, next_fire)
+        except Exception:
+            logger.exception("scheduler.tick_failed")
+            await asyncio.sleep(5)
+    logger.error("scheduler.no_schedules_left")
 
-        now = datetime.now(UTC)
-        for name, fire_at in list(next_fire.items()):
-            if fire_at > now:
-                continue
-            task = asyncio.create_task(_fire(name, fire_at))
-            _FIRE_TASKS.add(task)
-            task.add_done_callback(_FIRE_TASKS.discard)
+
+async def _wait_and_fire(iterators: dict[str, CronSim], next_fire: dict[str, datetime]) -> None:
+    soonest = min(next_fire.values())
+    delay = (soonest - datetime.now(UTC)).total_seconds()
+    if delay > 0:
+        await asyncio.sleep(delay)
+
+    now = datetime.now(UTC)
+    for name, fire_at in list(next_fire.items()):
+        if fire_at > now:
+            continue
+        task = asyncio.create_task(_fire(name, fire_at))
+        _FIRE_TASKS.add(task)
+        task.add_done_callback(_FIRE_TASKS.discard)
+        try:
             next_fire[name] = _next_after(iterators[name], now)
+        except Exception:
+            logger.exception("scheduler.schedule_dropped", workflow=name)
+            del next_fire[name]

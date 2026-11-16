@@ -45,9 +45,24 @@ Statuses: `queued`, `running`, `waiting_human`, `waiting_approval`, `paused`, `c
 
 - `all` serves HTTP and executes the queue (default);
 - `api` serves HTTP and only executes synchronous requests inline;
-- `worker` executes the queue (and serves `/health`).
+- `worker` executes the queue (and serves `/health` and `/ready`).
 
 `--concurrency` bounds runs per process.
+
+### Health and readiness
+
+- `GET /health` is the **liveness** probe. It answers `503` only when the worker's poll loop is gone, or has made no
+  poll attempt for `TUVL_WORKER_STALL_SECONDS` (300): a restart helps then. A database outage does not fail it.
+- `GET /ready` is the **readiness** probe. It answers `503` before the runtime has started, while the primary database
+  does not answer within two seconds, and once shutdown has begun, so the load balancer stops sending traffic first.
+  In production the body says only `ready` or `unavailable`. The Helm chart's `readinessProbe` uses it and the
+  `livenessProbe` uses `/health`.
+
+A failing claim, sweep or heartbeat is logged and retried; it never ends the poll loop or the heartbeat for good. A
+sweep that fails is skipped and the others still run. A heartbeat that fails is retried sooner than the lease runs
+out. When the heartbeat finds that the run is no longer this worker's, or a whole lease passes without a good beat,
+the running step is **cancelled** (`runtime.lease.cancelled`): carrying on would repeat its outside effects next to
+the worker that owns the run now.
 
 ## Crash recovery
 
