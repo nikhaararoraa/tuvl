@@ -14,6 +14,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from tuvl.core.auth import federation
 from tuvl.core.auth import router as auth_router
 from tuvl.core.auth.federation_loader import FEDERATION_REGISTRY
 from tuvl.core.auth.models import IAMRole, IAMRoleScope, IAMUser, IAMUserRole
@@ -77,7 +78,7 @@ async def api(monkeypatch):
             yield s
 
     gh = _Github()
-    monkeypatch.setattr(auth_router, "get_http_client", lambda timeout=30.0: gh)
+    monkeypatch.setattr(federation, "get_http_client", lambda timeout=30.0: gh)
     monkeypatch.setattr(settings, "tuvl_oauth_base_url", "https://nest.test")
     FEDERATION_REGISTRY.clear()
     FEDERATION_REGISTRY["github"] = {
@@ -87,7 +88,7 @@ async def api(monkeypatch):
     oauth_state_store._memory.clear()
 
     app = FastAPI()
-    app.include_router(auth_router.router)
+    app.include_router(federation.router)
     app.dependency_overrides[auth_router._get_iam_session] = _session
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
         yield client, gh

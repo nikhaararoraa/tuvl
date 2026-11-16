@@ -4,8 +4,8 @@ This module holds the CORE logic for every IAM operation — bootstrap, login,
 token refresh/logout, user/role CRUD, and federation-provider administration —
 extracted from the hardened REST implementation (``tuvl.core.auth.router``).
 
-``tuvl.core.auth.router`` is a THIN adapter over these functions: it parses
-request input, calls into this module, and maps the result (or a raised
+``tuvl.core.auth.router`` and ``tuvl.core.auth.federation`` are THIN adapters over these functions: they
+parse request input, call into this module, and map the result (or a raised
 :class:`IamError`) to an HTTP status. No FastAPI types appear here —
 functions take a plain DB session plus plain Python inputs and return plain
 results, or raise one of the typed domain errors below.
