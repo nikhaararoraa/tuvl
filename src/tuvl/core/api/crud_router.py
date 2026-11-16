@@ -5,6 +5,7 @@ from typing import Any, cast
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
+from sqlalchemy.exc import IntegrityError
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from tuvl.core.auth.access import bind_principal_context, require_access
@@ -20,6 +21,22 @@ _NO_INCLUDE: frozenset[str] = frozenset()
 
 # Matches filter[field_name] bracket-notation query params.
 _FILTER_RE = re.compile(r"^filter\[([A-Za-z_][A-Za-z0-9_]*)\]$")
+
+
+def _constraint(exc: IntegrityError) -> HTTPException:
+    """The answer to a write the database refused: the kind of constraint, never the values it names."""
+    text = str(exc.orig).lower()
+    if "unique" in text or "duplicate key" in text:
+        return HTTPException(status_code=409, detail="A record with the same value already exists.")
+    if "foreign key" in text:
+        return HTTPException(
+            status_code=409, detail="The record refers to, or is used by, another record."
+        )
+    if "not null" in text or "null value" in text:
+        return HTTPException(status_code=422, detail="A required field is missing.")
+    return HTTPException(
+        status_code=409, detail="The change conflicts with the data already stored."
+    )
 
 
 def _norm_groups(value: Any) -> list[str] | None:
@@ -111,8 +128,12 @@ def _make_crud_router(model_name: str) -> APIRouter:
     )
     async def create(body: CreateCls, session: AsyncSession = Depends(_session)) -> Any:  # type: ignore[valid-type]
         repo = get_repository(model_name, session)
-        record = await repo.add(cast("Any", body).model_dump(exclude_none=False))
-        await session.commit()
+        try:
+            record = await repo.add(cast("Any", body).model_dump(exclude_none=False))
+            await session.commit()
+        except IntegrityError as exc:
+            await session.rollback()
+            raise _constraint(exc) from exc
         await session.refresh(record)
         return record
 
@@ -196,13 +217,21 @@ def _make_crud_router(model_name: str) -> APIRouter:
         session: AsyncSession = Depends(_session),
     ) -> Any:
         repo = get_repository(model_name, session)
-        patch_data = cast("Any", body).model_dump(exclude_none=True)
+        # a field the body names is changed, even to null; one it leaves out is not touched
+        patch_data = cast("Any", body).model_dump(exclude_unset=True)
         if not patch_data:
             raise HTTPException(status_code=422, detail="No fields provided to update")
-        record = await repo.update(record_id, patch_data)
-        if record is None:
-            raise HTTPException(status_code=404, detail=f"{model_name} '{record_id}' not found")
-        await session.commit()
+        cleared = sorted(k for k, v in patch_data.items() if v is None and not repo.is_nullable(k))
+        if cleared:
+            raise HTTPException(status_code=422, detail=f"Cannot be null: {', '.join(cleared)}.")
+        try:
+            record = await repo.update(record_id, patch_data)
+            if record is None:
+                raise HTTPException(status_code=404, detail=f"{model_name} '{record_id}' not found")
+            await session.commit()
+        except IntegrityError as exc:
+            await session.rollback()
+            raise _constraint(exc) from exc
         await session.refresh(record)
         return record
 
@@ -214,10 +243,14 @@ def _make_crud_router(model_name: str) -> APIRouter:
     )
     async def delete(record_id: uuid.UUID, session: AsyncSession = Depends(_session)) -> Response:
         repo = get_repository(model_name, session)
-        deleted = await repo.remove(record_id)
-        if not deleted:
-            raise HTTPException(status_code=404, detail=f"{model_name} '{record_id}' not found")
-        await session.commit()
+        try:
+            deleted = await repo.remove(record_id)
+            if not deleted:
+                raise HTTPException(status_code=404, detail=f"{model_name} '{record_id}' not found")
+            await session.commit()
+        except IntegrityError as exc:
+            await session.rollback()
+            raise _constraint(exc) from exc
         return Response(status_code=204)
 
     endpoint_ops: dict[Any, str] = {

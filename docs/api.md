@@ -18,7 +18,7 @@ surface per workflow. (gRPC was removed in 2.0.)
 | `GET /api/approvals` | Open approvals the caller may decide |
 | `POST /api/approvals/{id}` | Decide: `{ values }` for a human form, `{ decision: approve\|edit\|reject, edited_args?, message? }` for a tool call |
 | `POST /api/runs/{id}/human/{agent_id}` | Submit a human agent's form (alias) |
-| `/models/{model}/…` | CRUD for models that opt in with `spec.api.crud: [list, read, create, update, delete]` |
+| `/models/{model}/…` | CRUD for models that opt in with `spec.api.crud: [list, read, create, update, delete]`. `PATCH` changes the fields the body names, `null` included (a field the body leaves out is untouched; `null` on a required field is `422`). A list is ordered by primary key. A write the database refuses is `409` (a duplicate, or a record that is referred to) or `422` (a required field is missing); the answer names the constraint, never the values |
 | `/auth/*`, `/admin/*` | Login; IAM administration and federation admin (the `iam` group), role membership (the `roles` group) and engine admin (`admin`), all three off in production unless you expose them |
 | `/api/artifacts` | Artifact list/upload (off in production unless you expose it) |
 | `/health` | Liveness (`503` only if the worker's poll loop is gone or stuck) and decision-model readiness |
