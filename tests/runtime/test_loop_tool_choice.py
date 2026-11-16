@@ -4,12 +4,20 @@ turn, and what the ``llm_turn`` event records about a reply."""
 from __future__ import annotations
 
 import dataclasses
+import json
 from collections.abc import Callable
 from typing import Any
 
+import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from tests.llm.test_client import (  # noqa: F401 - the fake endpoint fixture and helpers
+    Http,
+    body,
+    http,
+    serve,
+)
 from tests.runtime import test_loop_engine as base
 from tests.runtime.test_loop_engine import (  # noqa: F401 - the autouse fixture and the helpers
     agents,
@@ -170,3 +178,68 @@ def test_the_default_choice_leaves_the_workflow_hash_as_it_was() -> None:
     dumped = required.model_dump(mode="json")["spec"]["agents"][0]["loop"]
     assert dumped["tool_choice"] == "required"
     assert workflow_hash(required) != workflow_hash(plain)
+
+
+# ── over HTTP: the real client against a model that works with tools, then answers in text ──────────
+
+
+def _reply(message: dict[str, Any], reason: str) -> httpx.Response:
+    return httpx.Response(
+        200,
+        json={
+            "model": "m",
+            "choices": [{"message": message, "finish_reason": reason}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        },
+    )
+
+
+def _calls(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    function = {"name": name, "arguments": json.dumps(arguments)}
+    return {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [{"id": "c1", "type": "function", "function": function}],
+    }
+
+
+def text_after_its_tools(refuse_named: bool) -> Callable[[httpx.Request], httpx.Response]:
+    def answer(request: httpx.Request) -> httpx.Response:
+        sent = json.loads(request.content)
+        if isinstance(sent.get("tool_choice"), dict):  # asked for a function by name
+            if refuse_named:
+                return httpx.Response(400, json={"error": {"message": "tool_choice must be auto"}})
+            return _reply(
+                _calls("finish", {"outcome": "resolved", "resolution": "done"}), "tool_calls"
+            )
+        if not any(m["role"] == "tool" for m in sent["messages"]):
+            return _reply(_calls("lookup_order", {"order_id": "o-1"}), "tool_calls")
+        return _reply({"role": "assistant", "content": "The balance is 40."}, "stop")
+
+    return answer
+
+
+async def test_over_http_a_model_that_ends_in_text_is_held_to_finish(
+    pg_engine: AsyncEngine,
+    http: Http,  # noqa: F811
+) -> None:
+    serve(http, text_after_its_tools(refuse_named=False))
+    run = await start(pg_engine, workflows())
+    assert run.status == "completed" and run.output == {"status": 200, "body": "done"}
+    assert [body(r)["tool_choice"] for r in http] == ["auto", "auto", FINISH_NAMED]
+    assert (
+        body(http[2])["tools"][-1]["function"]["name"] == "finish"
+    )  # the function it is asked for is offered
+
+
+async def test_over_http_a_provider_that_refuses_the_name_leaves_the_run_as_it_was(
+    pg_engine: AsyncEngine,
+    http: Http,  # noqa: F811
+) -> None:
+    serve(http, text_after_its_tools(refuse_named=True))
+    run = await start(pg_engine, workflows())
+    done = (await events(pg_engine, run.id, "agent_completed"))[0]
+    assert (done["signal"], done["error_type"]) == ("error", "parse_error")
+    assert [body(r)["tool_choice"] for r in http] == ["auto", "auto", FINISH_NAMED, "auto"]
+    turns = await events(pg_engine, run.id, "llm_turn")
+    assert turns[-1]["tool_choice_rejected"] is True and turns[-1]["finish_reason"] == "stop"
