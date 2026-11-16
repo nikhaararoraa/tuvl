@@ -88,7 +88,7 @@ async def _delete_batch(session: AsyncSession, ids: list[Any], result: Pruned) -
     for table in RUN_TABLES:
         gone = await queue._execute(
             session,
-            sa.text(f"DELETE FROM {table} WHERE run_id IN :ids").bindparams(
+            sa.text(f"DELETE FROM {table} WHERE run_id IN :ids").bindparams(  # noqa: S608 - RUN_TABLES is a fixed tuple of our own table names
                 sa.bindparam("ids", value=ids, expanding=True)
             ),
         )
@@ -132,7 +132,7 @@ async def prune(
             for table in RUN_TABLES:
                 counted = await queue._execute(
                     session,
-                    sa.text(f"SELECT count(*) FROM {table} WHERE run_id IN :ids").bindparams(
+                    sa.text(f"SELECT count(*) FROM {table} WHERE run_id IN :ids").bindparams(  # noqa: S608 - same fixed tuple
                         sa.bindparam("ids", value=list(ids), expanding=True)
                     ),
                 )
