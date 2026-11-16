@@ -188,6 +188,26 @@ def test_a_short_password_is_refused(db):
     assert result.exit_code == 1 and "at least" in result.output
 
 
+def test_a_name_a_token_cannot_carry_is_refused(db):
+    scope = iam("roles", "create", "ops", "-s", "orders:*")
+    assert scope.exit_code == 1 and "scope" in scope.output.lower()
+    name = iam("roles", "create", "two words")
+    assert name.exit_code == 1
+    assert "ops" not in iam("roles", "list").output
+
+
+def test_reset_admin_applies_the_password_rule_too(db):
+    result = runner.invoke(
+        app, ["iam", "reset-admin", ADMIN], env={"TUVL_IAM_NEW_PASSWORD": "short"}
+    )
+    assert result.exit_code == 1 and "at least 8 characters" in result.output
+    too_long = runner.invoke(
+        app, ["iam", "reset-admin", ADMIN], env={"TUVL_IAM_NEW_PASSWORD": "x" * 73}
+    )
+    assert too_long.exit_code == 1 and "at most 72 bytes" in too_long.output
+    assert iam("roles", "list").exit_code == 0  # the old password still works
+
+
 def test_a_role_with_members_needs_force(db):
     iam("roles", "create", "ops")
     iam("users", "create", "ann@example.com", "-r", "ops", TUVL_IAM_NEW_PASSWORD="ann-pw-12345")
