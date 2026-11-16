@@ -597,6 +597,7 @@ async def init_db() -> None:
     # Always create IAM tables on the primary datasource when it exists.
     if _PRIMARY_DS in _engines_rw:
         from tuvl.core.auth.models import (
+            IAMLoginAttempt,
             IAMPasswordToken,
             IAMRevokedToken,
             IAMRole,
@@ -614,6 +615,7 @@ async def init_db() -> None:
             table_of(IAMPasswordToken),
             table_of(IAMSessionEnd),
             table_of(IAMRevokedToken),
+            table_of(IAMLoginAttempt),
         ]
         async with _engines_rw[_PRIMARY_DS].begin() as conn:
             await conn.run_sync(

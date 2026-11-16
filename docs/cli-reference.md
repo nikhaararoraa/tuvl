@@ -1082,3 +1082,10 @@ Arguments: `<email>`
 ### `tuvl iam users list`
 
 List users with their roles.
+
+
+### `tuvl iam users unlock`
+
+Let a user who is made to wait after failed sign-ins try again now.
+
+Arguments: `<email>`

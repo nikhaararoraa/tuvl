@@ -18,6 +18,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from tuvl.core.auth import router as auth_router
 from tuvl.core.auth.blacklist import token_blacklist
 from tuvl.core.auth.models import (
+    IAMLoginAttempt,
     IAMRevokedToken,
     IAMRole,
     IAMRoleScope,
@@ -69,6 +70,7 @@ async def _engine(*, legacy_links: bool):
         IAMRoleScope.__table__,
         IAMSessionEnd.__table__,
         IAMRevokedToken.__table__,
+        IAMLoginAttempt.__table__,
     ]
     if not legacy_links:
         tables.append(IAMUserRole.__table__)

@@ -22,6 +22,7 @@ from tuvl.cli.commands import iam as iam_cli
 from tuvl.core.auth import iam_service
 from tuvl.core.auth.blacklist import token_blacklist
 from tuvl.core.auth.models import (
+    IAMLoginAttempt,
     IAMPasswordToken,
     IAMRevokedToken,
     IAMRole,
@@ -62,6 +63,7 @@ def db(monkeypatch, tmp_path):
                     IAMPasswordToken.__table__,
                     IAMSessionEnd.__table__,
                     IAMRevokedToken.__table__,
+                    IAMLoginAttempt.__table__,
                 ],
             )
         await engine.dispose()

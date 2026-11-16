@@ -24,6 +24,7 @@ from tuvl.core.auth import router as auth_router
 from tuvl.core.auth.blacklist import token_blacklist
 from tuvl.core.auth.federation_loader import FEDERATION_REGISTRY
 from tuvl.core.auth.models import (
+    IAMLoginAttempt,
     IAMRevokedToken,
     IAMRole,
     IAMRoleScope,
@@ -70,6 +71,7 @@ async def _make_iam_engine():
                 IAMRoleScope.__table__,
                 IAMSessionEnd.__table__,
                 IAMRevokedToken.__table__,
+                IAMLoginAttempt.__table__,
             ],
         )
     return engine

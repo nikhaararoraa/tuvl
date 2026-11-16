@@ -16,6 +16,7 @@ from tuvl.core.auth import iam_service
 from tuvl.core.auth.blacklist import token_blacklist
 from tuvl.core.auth.iam_service import ConflictError, NotFoundError
 from tuvl.core.auth.models import (
+    IAMLoginAttempt,
     IAMRevokedToken,
     IAMRole,
     IAMRoleScope,
@@ -51,6 +52,7 @@ async def session():
                 IAMRoleScope.__table__,
                 IAMSessionEnd.__table__,
                 IAMRevokedToken.__table__,
+                IAMLoginAttempt.__table__,
             ],
         )
     async with AsyncSession(engine, expire_on_commit=False) as s:

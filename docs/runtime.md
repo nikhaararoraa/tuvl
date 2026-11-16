@@ -152,7 +152,7 @@ chart (60) must exceed the sum, and a `preStop` pause lets the load balancer sto
 `--allow-host` always lets loopback through, so a reverse proxy on the same host reaches the server whatever the list says unless its `X-Forwarded-For` is trusted: set `--forwarded-allow-ips` below.
 
 Behind an ingress, `--forwarded-allow-ips` (`forwardedAllowIps` in the chart) names the proxies whose
-`X-Forwarded-For` is trusted, so `--allow-host` and the logs see the real client. Leave it empty to trust
+`X-Forwarded-For` is trusted, so `--allow-host`, the logs and the per-address sign-in limit (`TUVL_LOGIN_IP_FAILURES`) see the real client. Leave it empty to trust
 only `127.0.0.1`; `*` trusts every sender and lets a client spoof its address. `--limit-max-requests`
 restarts a worker after that many requests. The `Server` response header is off.
 

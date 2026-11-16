@@ -133,6 +133,7 @@ It belongs to the `iam` API group, which a production server does not mount (see
 
 - **bcrypt off the event loop.** Hashing and verification run at cost factor 12 (~200–300 ms of pure CPU) and are always dispatched through `run_in_threadpool` (`aget_password_hash` / `averify_password` in `tuvl/core/auth/crypto.py`), so login never stalls the ASGI event loop. Passwords are truncated to bcrypt's 72-byte limit before hashing, matching bcrypt's own semantics.
 - **Login-timing equalisation.** When the account is missing, inactive, or passwordless, the handler still verifies the submitted password against a throwaway hash (`_DUMMY_PW_HASH`), so response timing cannot be used to enumerate which emails exist. All failure cases return the same generic 401.
+- **Login throttle.** Password guesses are slowed per login and per address. After **5 wrong passwords** a login waits 2, 4, 8 ... seconds (up to 15 minutes) before its next attempt is judged; meanwhile `POST /auth/token` answers `429` with `Retry-After`, and even the right password is refused (no password is checked while a login waits). The count is kept under a hash of the lower-cased login in `tuvl_system_iam_login_attempts`, so an unknown login waits exactly like a known one and the answer never says which exist; a successful sign-in deletes it, and a login with no failure for a day is forgotten. `tuvl iam` is throttled the same way. One **client address** may make `TUVL_LOGIN_IP_FAILURES` (30, `0` turns it off) failed attempts in 15 minutes, then waits out the window; that counter lives in the process, so each worker counts its own, and behind a proxy the address is the proxy's unless `--forwarded-allow-ips` names it (see `docs/runtime.md`). Failures are audited as `auth.login.failed` (a hash of the login, never the login or the password). A waiting user is released with `tuvl iam users unlock <email>`; `reset-admin` also clears the wait of the account it recovers.
 
 On success the handler loads the user's roles and the distinct union of their scopes, and mints a token (§6).
 
@@ -355,7 +356,7 @@ It asks for an administrator's email and password (prompted, `--password-stdin`,
 | `users create <email> [--no-password]` · `users invite <email> [--url ...{token}...] [--hours N]` | A user with no password and a one-time set-password link for them (see *Set-password links*). `invite` prints only the link, or the bare token without `--url`, so it can be captured and sent to the user yourself; it works once and a newer one replaces an older unused one. |
 | `roles grant <role> <scope>` · `revoke` | One scope at a time. Revoking signs the holders out. |
 | `roles add-user <role> <email>` · `remove-user` | Who holds the role. |
-| `users list` · `create` · `enable` · `disable` | The users. `create` prompts for the password (or `TUVL_IAM_NEW_PASSWORD`). |
+| `users list` · `create` · `enable` · `disable` · `unlock` | The users. `create` prompts for the password (or `TUVL_IAM_NEW_PASSWORD`). `unlock <email>` lets a user who is made to wait after failed sign-ins try again now. |
 | `scopes list` | The scopes this project enforces and what each guards. |
 | `check` | Is every scope the project enforces granted by an active role? Exits 1 if not. Run it after a release that adds a scope. |
 | `reset-admin <email>` | Break-glass: makes the user an active administrator with a new password and restores the `superadmin` role. Asks for no login, so only use it when no administrator can sign in. |
@@ -428,6 +429,7 @@ tuvl generate key --write
 | 403 / `PERMISSION_DENIED` | Authenticated but not allowed | missing required scope or group; federated email domain not in `allowed_domains`; unverified-email auto-link refusal; disabled account at federated login |
 | 404 / `NOT_FOUND` | Resource absent — or deliberately indistinguishable from absent | unknown user/role id in admin CRUD; unknown workflow; another principal's or tenant's run (existence not leaked) |
 | 409 / `ALREADY_EXISTS` | State conflict | bootstrap after first user exists; duplicate user email (in any case) or role name |
+| 429 | Too many failed sign-ins | `POST /auth/token` for a login (or an address) that has to wait; `Retry-After` says how long |
 | 422 | Input the IAM rules refuse | a password under 8 characters or over 72 bytes; a role name or scope a token cannot carry |
 | 501 | Provider declared but unusable | federation provider missing `client_id`/`client_secret` |
 

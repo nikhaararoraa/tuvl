@@ -491,6 +491,18 @@ def users_enable(ctx: typer.Context, email: Annotated[str, typer.Argument()]) ->
     _set_user_active(ctx, email, True)
 
 
+@users_app.command("unlock")
+def users_unlock(ctx: typer.Context, email: Annotated[str, typer.Argument()]) -> None:
+    """Let a user who is made to wait after failed sign-ins try again now."""
+
+    async def op(session: Any, actor: str | None) -> bool:
+        was_waiting = await _svc().unlock_login(session, email)
+        _audit(actor, "users unlock", email)
+        return bool(was_waiting)
+
+    _done(f"{email} can sign in again." if _execute(ctx, op) else f"{email} was not waiting.")
+
+
 @users_app.command("disable")
 def users_disable(ctx: typer.Context, email: Annotated[str, typer.Argument()]) -> None:
     """Stop a user signing in (their sessions end)."""

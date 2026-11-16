@@ -153,6 +153,9 @@ class Settings(BaseSettings):
     # Access-token lifetime in seconds.  Set to 0 to disable expiry (not
     # recommended for production).  Default: 24 hours.
     tuvl_token_ttl_seconds: int = 86400
+    #: Failed password attempts one client address may make in 15 minutes before it waits; 0 turns the
+    #: per-address limit off (the per-login wait stays). Behind a proxy, set `--forwarded-allow-ips`.
+    tuvl_login_ip_failures: int = 30
 
     # How long a worker trusts its own answer to "is this token still good?" when revocations and session ends
     # are kept in Postgres (no Redis datasource). 0 asks the database on every request.

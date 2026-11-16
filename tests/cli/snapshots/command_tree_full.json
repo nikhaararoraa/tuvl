@@ -148,6 +148,10 @@
   "hidden": false
  },
  {
+  "command": "iam users unlock",
+  "hidden": false
+ },
+ {
   "command": "import idea",
   "hidden": false
  },

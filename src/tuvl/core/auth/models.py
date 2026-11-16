@@ -150,6 +150,26 @@ class IAMPasswordToken(SQLModel, table=True):
     )
 
 
+class IAMLoginAttempt(SQLModel, table=True):
+    """Failed password attempts per login, so a guesser is made to wait.
+
+    Keyed by a hash of the normalised login rather than by user: an unknown login is slowed exactly like a
+    known one, so the answer never says which logins exist. Nothing is stored until a login fails; a
+    success deletes the row; ``locked_until`` is when the next attempt is judged again."""
+
+    __tablename__ = "tuvl_system_iam_login_attempts"
+
+    key: str = Field(primary_key=True)
+    failures: int = Field(default=0)
+    locked_until: datetime.datetime | None = Field(
+        default=None, sa_column=sa.Column(sa.DateTime, nullable=True)
+    )
+    updated_at: datetime.datetime = Field(
+        default_factory=datetime.datetime.utcnow,
+        sa_column=sa.Column(sa.DateTime, nullable=False, index=True),
+    )
+
+
 class IAMSessionEnd(SQLModel, table=True):
     """When a user's sessions were last ended: a token issued before then is refused.
 

@@ -13,7 +13,7 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -31,6 +31,7 @@ from tuvl.core.auth.iam_service import (
     ConflictError,
     NotFoundError,
     PersistenceError,
+    ThrottledError,
     ValidationError,
 )
 from tuvl.core.auth.schemas import TokenUser
@@ -196,6 +197,7 @@ async def set_password(req: SetPasswordRequest, session: IamSession) -> None:
     summary="Exchange email + password for an access token (JWT)",
 )
 async def login(
+    request: Request,
     form: Annotated[OAuth2PasswordRequestForm, Depends()],
     session: IamSession,
 ) -> TokenResponse:
@@ -206,9 +208,23 @@ async def login(
     On success returns ``{"access_token": "<jwt>", "token_type": "bearer"}``: an
     Ed25519-signed JWT whose ``sub``, ``groups`` and ``scopes`` claims come from
     the user's roles.
+
+    After 5 wrong passwords a login waits 2, 4, 8 ... seconds (up to 15 minutes) before the next
+    attempt is judged, and answers **429** with ``Retry-After`` meanwhile, whether or not the login exists.
     """
     try:
-        token = await iam_service.login(session, login_str=form.username, password=form.password)
+        token = await iam_service.login(
+            session,
+            login_str=form.username,
+            password=form.password,
+            client_ip=request.client.host if request.client else None,
+        )
+    except ThrottledError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=str(exc),
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from exc
     except AuthenticationError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
