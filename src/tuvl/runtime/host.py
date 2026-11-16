@@ -10,11 +10,13 @@ from __future__ import annotations
 import asyncio
 import os
 import socket
+import time
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+import structlog
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
@@ -24,6 +26,8 @@ from tuvl.contract.types import build_model
 from tuvl.runtime import queue
 from tuvl.runtime.models import SystemRun
 from tuvl.runtime.runner import Runner, workflow_hash
+
+logger = structlog.get_logger(__name__)
 
 Role = Literal["all", "api", "worker"]
 
@@ -91,6 +95,26 @@ class RuntimeHost:
     def start(self) -> None:
         if self.role in ("all", "worker") and self._poller is None:
             self._poller = asyncio.create_task(self.worker.run_forever())
+            self._poller.add_done_callback(self._poller_ended)
+
+    @staticmethod
+    def _poller_ended(task: asyncio.Task[None]) -> None:
+        if not task.cancelled():
+            logger.error("runtime.worker.ended", error=repr(task.exception()))
+
+    def worker_state(self, stall_seconds: float) -> str:
+        """``ok``; ``starting`` (the poll loop has not been started yet); ``stopped`` (it is gone);
+        ``stalled`` (no poll attempt for *stall_seconds*); ``none`` (this process runs no poller)."""
+        if self.role == "api":
+            return "none"
+        if self._poller is None:
+            return "starting"
+        if self._poller.done():
+            return "stopped"
+        last = self.worker.last_poll
+        if last is not None and time.monotonic() - last > stall_seconds:
+            return "stalled"
+        return "ok"
 
     async def stop(self) -> None:
         await self.worker.stop()

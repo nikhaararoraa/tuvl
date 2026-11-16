@@ -12,6 +12,16 @@ release below is the current one.
 
 ## [Unreleased]
 
+### Added
+
+- **`GET /ready`**, the readiness probe: `503` before the runtime has started, while the primary database does not answer, and during shutdown. `/health` now fails (`503`) when the worker's poll loop is gone or has made no attempt for `TUVL_WORKER_STALL_SECONDS` (300). The Helm chart's `readinessProbe` uses `/ready`; the `livenessProbe` stays on `/health`.
+
+### Fixed
+
+- **A worker survives a failing database call.** One failing claim, sweep or heartbeat used to end the poll loop or the heartbeat for good while `/health` went on answering. Each is now logged and retried, a failing sweep no longer blocks the claim, and a failed heartbeat is retried sooner than the lease runs out.
+- **A step whose run moved to another worker is cancelled.** It used to carry on, repeating its outside effects. The same happens when a whole lease passes without a good heartbeat.
+- **A schedule that cannot advance no longer stops the scheduler.** It is dropped with an error log and the other schedules go on.
+
 ### Security
 
 - **The `http` tool reads `${VAR}` only from the workflow's own text.** A `${VAR}` in a tool's `url` or `headers` used to be expanded after `{{ }}` input was rendered into it, so a value that arrived as input was read as an environment reference. The environment is now read first and input rendered second, the order `code.with` already used. The `tool_call` journal event and the error messages show the URL with `${VAR}` as written, never the value.

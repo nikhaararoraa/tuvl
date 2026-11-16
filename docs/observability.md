@@ -75,6 +75,13 @@ tuvl logs with structlog: JSON lines in production, a readable console format in
 | `runtime.trigger.mounted` | info | `workflow`, `method`, `path` |
 | `runtime.mcp.mounted` | info | `tools` |
 | `runtime.lease.lost` | warning | the run moved to another worker |
+| `runtime.lease.cancelled` | warning | the running step was cancelled because the run is no longer this worker's |
+| `runtime.lease.expired` | error | a whole lease passed without a good heartbeat (the database was unreachable) |
+| `runtime.heartbeat.failed` | warning | a heartbeat raised; it is retried |
+| `runtime.worker.poll_failed` | error | a claim raised; the poll loop goes on after a backoff |
+| `runtime.sweep.failed` | error | a housekeeping sweep raised; it is skipped |
+| `runtime.worker.ended` | error | the poll loop ended unexpectedly; `/health` answers 503 |
+| `scheduler.schedule_dropped` | error | a schedule that cannot advance is no longer fired; the others go on |
 | `runtime.pause_ignored` | warning | pause requested on a `per_run` transaction |
 | `decide.shadow_model_failed` | warning | `agent`, `error` (shadow failures never fail the run) |
 | `decision.provider.load_failed` | warning | a decision provider entry point failed to load |

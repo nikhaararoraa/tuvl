@@ -260,7 +260,10 @@ class Lease:
 
     run_id: uuid.UUID
     owner: str
+    #: set by whoever learns the lease is gone: the heartbeat, or the runner when a fenced write matches no row
     lost: asyncio.Event = field(default_factory=asyncio.Event)
+    #: set by the heartbeat alone; the executor is then cancelled, because the run is no longer this worker's
+    revoked: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 @dataclass
@@ -272,16 +275,30 @@ class Worker:
     lease_seconds: float = LEASE_SECONDS
     heartbeat_seconds: float = HEARTBEAT_SECONDS
     poll_seconds: float = POLL_SECONDS
+    #: ``time.monotonic()`` when the poll loop last finished an attempt, whether or not it worked
+    last_poll: float | None = None
     _active: dict[uuid.UUID, asyncio.Task[None]] = field(default_factory=dict)
     _stopping: asyncio.Event = field(default_factory=asyncio.Event)
 
     async def run_forever(self) -> None:
         logger.info("runtime.worker.started", worker=self.owner, concurrency=self.concurrency)
+        failures = 0
         while not self._stopping.is_set():
-            claimed = await self.claim_some()
+            try:
+                claimed = await self.claim_some()
+                failures = 0
+            except Exception:
+                # a dropped connection or a failover must not end the poll loop for good
+                failures += 1
+                claimed = 0
+                logger.exception("runtime.worker.poll_failed", worker=self.owner, failures=failures)
+            self.last_poll = time.monotonic()
             if not claimed:
+                delay = (
+                    min(self.poll_seconds * 2**failures, 30.0) if failures else self.poll_seconds
+                )
                 with contextlib.suppress(TimeoutError):
-                    await asyncio.wait_for(self._stopping.wait(), self.poll_seconds)
+                    await asyncio.wait_for(self._stopping.wait(), delay)
         await self.drain()
 
     async def stop(self) -> None:
@@ -306,7 +323,14 @@ class Worker:
             return 0
         async with AsyncSession(self.engine, expire_on_commit=False) as s:
             for sweep in SWEEPS:
-                await sweep(s)
+                try:
+                    await sweep(s)
+                    await s.commit()
+                except Exception:  # one failing sweep must not stop the others, or the claim
+                    logger.exception(
+                        "runtime.sweep.failed", sweep=getattr(sweep, "__name__", sweep)
+                    )
+                    await s.rollback()
             ids = await claim(s, self.owner, limit=free, lease_seconds=self.lease_seconds)
             await s.commit()
         for run_id in ids:
@@ -328,7 +352,7 @@ class Worker:
         lease = Lease(run_id, self.owner)
         beat = asyncio.create_task(self.keep_alive(lease))
         try:
-            await self._run_as_tenant(run_id, lease)
+            await self._until_revoked(run_id, lease)
         except Exception as exc:
             logger.exception("runtime.run.crashed", run_id=str(run_id))
             async with AsyncSession(self.engine) as s:
@@ -344,6 +368,23 @@ class Worker:
         finally:
             beat.cancel()
 
+    async def _until_revoked(self, run_id: uuid.UUID, lease: Lease) -> None:
+        """Run the executor, and cancel it the moment the heartbeat finds the run is no longer ours:
+        a step that carries on would repeat its outside effects next to the worker that owns the run now."""
+        work = asyncio.create_task(self._run_as_tenant(run_id, lease))
+        revoked = asyncio.create_task(lease.revoked.wait())
+        try:
+            await asyncio.wait({work, revoked}, return_when=asyncio.FIRST_COMPLETED)
+            if work.done():
+                work.result()
+                return
+            logger.warning("runtime.lease.cancelled", run_id=str(run_id), worker=self.owner)
+        finally:
+            revoked.cancel()
+            if not work.done():
+                work.cancel()
+                await asyncio.gather(work, return_exceptions=True)
+
     async def _run_as_tenant(self, run_id: uuid.UUID, lease: Lease) -> None:
         """Execute under the tenant that owns the run (multi-tenant mode); a plain call otherwise."""
         async with AsyncSession(self.engine) as s:
@@ -357,17 +398,40 @@ class Worker:
             await self.executor(run_id, lease)
 
     async def keep_alive(self, lease: Lease) -> None:
+        interval = self.heartbeat_seconds
+        last_good = time.monotonic()
         while True:
-            await asyncio.sleep(self.heartbeat_seconds)
-            async with AsyncSession(self.engine) as s:
-                alive = await heartbeat(
-                    s, lease.run_id, lease.owner, lease_seconds=self.lease_seconds
-                )
-                await s.commit()
+            await asyncio.sleep(interval)
+            attempt = time.monotonic()
+            try:
+                async with AsyncSession(self.engine) as s:
+                    alive = await heartbeat(
+                        s, lease.run_id, lease.owner, lease_seconds=self.lease_seconds
+                    )
+                    await s.commit()
+            except Exception:
+                logger.warning("runtime.heartbeat.failed", run_id=str(lease.run_id), exc_info=True)
+                if time.monotonic() - last_good >= self.lease_seconds:
+                    # a whole lease without a good beat: the database has already given the run away
+                    logger.error(
+                        "runtime.lease.expired", run_id=str(lease.run_id), worker=lease.owner
+                    )
+                    self._revoke(lease)
+                    return
+                interval = max(
+                    self.heartbeat_seconds / 3, 0.05
+                )  # try again sooner than the lease runs out
+                continue
             if not alive:
                 logger.warning("runtime.lease.lost", run_id=str(lease.run_id), worker=lease.owner)
-                lease.lost.set()
+                self._revoke(lease)
                 return
+            last_good, interval = attempt, self.heartbeat_seconds
+
+    @staticmethod
+    def _revoke(lease: Lease) -> None:
+        lease.lost.set()
+        lease.revoked.set()
 
 
 async def run_inline(

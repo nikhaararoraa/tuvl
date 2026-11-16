@@ -21,7 +21,8 @@ surface per workflow. (gRPC was removed in 2.0.)
 | `/models/{model}/…` | CRUD for models that opt in with `spec.api.crud: [list, read, create, update, delete]` |
 | `/auth/*`, `/admin/*` | Login; IAM administration and federation admin (the `iam` group), role membership (the `roles` group) and engine admin (`admin`), all three off in production unless you expose them |
 | `/api/artifacts` | Artifact list/upload (off in production unless you expose it) |
-| `/health` | Liveness and decision-model readiness |
+| `/health` | Liveness (`503` only if the worker's poll loop is gone or stuck) and decision-model readiness |
+| `/ready` | Readiness (`503` before the runtime has started, while the database does not answer, or while shutting down) |
 | `/openapi.json`, `/docs`, `/redoc` | OpenAPI generated from the contracts; off in production unless you turn it on |
 
 A run descriptor (`202` body, `GET /api/runs/{id}`):
