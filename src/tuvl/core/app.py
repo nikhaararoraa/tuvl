@@ -135,6 +135,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             known=list(KNOWN_ENVS),
             consequence="treated as not production: development documents load and boot checks only warn",
         )
+    if settings.tuvl_env.strip().lower() == "production" and not settings.tuvl_token_ttl_seconds:
+        logger.error(
+            "auth.tokens.no_expiry",
+            detail="TUVL_TOKEN_TTL_SECONDS=0: access tokens never expire, so a stolen one works until "
+            "its user's sessions are ended",
+        )
     init_telemetry()
     reconfigure_third_party_logging()
 

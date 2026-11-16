@@ -275,7 +275,7 @@ async def refresh_token(
 
     try:
         new_token = await iam_service.refresh(
-            session, user_id=current_user_info.user_id, raw_token=raw_token
+            session, user_id=current_user_info.user_id, raw_token=raw_token, claims=claims
         )
     except AuthenticationError as exc:
         # NOTE: deliberately no WWW-Authenticate header here — the original
@@ -292,7 +292,8 @@ async def refresh_token(
 )
 async def logout(
     raw_token: CurrentToken,
-    _claims: Annotated[Claims, Depends(verify_token)],
+    claims: Annotated[Claims, Depends(verify_token)],
+    session: IamSession,
 ) -> None:
     """Invalidate the current bearer token.
 
@@ -300,7 +301,8 @@ async def logout(
     workers that share the Redis blacklist.  Clients should discard the
     token immediately.
     """
-    await iam_service.revoke_token(raw_token)
+    await iam_service.revoke_token(raw_token, claims, session=session)
+    await session.commit()
     logger.info("Token revoked via logout.")
 
 

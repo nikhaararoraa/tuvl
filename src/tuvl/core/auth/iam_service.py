@@ -31,6 +31,7 @@ import hashlib
 import re
 import secrets
 import uuid
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -192,13 +193,13 @@ async def build_token_for_user(session: AsyncSession, user: IAMUser) -> str:
     return mint_token(str(user.id), role_names, scopes, ttl_seconds=ttl)
 
 
-async def revoke_token(raw_token: str) -> None:
-    """Blacklist *raw_token* using the standard TTL-or-fallback rule.
-
-    Shared by logout and refresh, on both transports.
+async def revoke_token(
+    raw_token: str, claims: Mapping[str, Any] | None = None, *, session: AsyncSession | None = None
+) -> None:
+    """Refuse *raw_token* from now on, until it would have expired anyway (for good when it has no
+    expiry). Shared by logout and refresh. With *session* the caller commits the write.
     """
-    ttl = settings.tuvl_token_ttl_seconds or 86400
-    await token_blacklist.revoke(raw_token, ttl_seconds=ttl)
+    await token_blacklist.revoke(raw_token, claims=claims, session=session)
 
 
 # ── Keeping an administrator ───────────────────────────────────────────────────
@@ -335,7 +336,13 @@ async def login(session: AsyncSession, *, login_str: str, password: str) -> str:
     return token
 
 
-async def refresh(session: AsyncSession, *, user_id: str, raw_token: str) -> str:
+async def refresh(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    raw_token: str,
+    claims: Mapping[str, Any] | None = None,
+) -> str:
     """Revoke *raw_token* and mint a fresh one for the user it belonged to.
 
     Raises :class:`AuthenticationError` if the user is gone or disabled.
@@ -344,7 +351,8 @@ async def refresh(session: AsyncSession, *, user_id: str, raw_token: str) -> str
     if user is None or not user.is_active:
         raise AuthenticationError("User not found or inactive.")
 
-    await revoke_token(raw_token)
+    await revoke_token(raw_token, claims, session=session)
+    await session.commit()
 
     new_token = await build_token_for_user(session, user)
     logger.info("auth.token.refreshed", email=user.email)
@@ -410,13 +418,15 @@ async def get_user(session: AsyncSession, user_id: uuid.UUID) -> tuple[IAMUser, 
     return user, [r.name for r in roles]
 
 
-async def end_sessions(user_ids: list[uuid.UUID]) -> None:
-    """Refuse the tokens these users already hold: their access just shrank."""
-    from tuvl.core.auth.blacklist import token_blacklist
+async def end_sessions(session: AsyncSession, user_ids: list[uuid.UUID]) -> None:
+    """Refuse the tokens these users already hold: their access just shrank.
 
+    Call it before the commit of the change that narrowed the access: with Postgres as the store the two
+    commit or roll back together, and with Redis a mark that outlives a failed change only ends sessions early.
+    """
     ttl = settings.tuvl_token_ttl_seconds or None
     for user_id in user_ids:
-        await token_blacklist.end_sessions(str(user_id), ttl)
+        await token_blacklist.end_sessions(str(user_id), ttl, session=session)
 
 
 async def _role_members(session: AsyncSession, role_id: uuid.UUID) -> list[uuid.UUID]:
@@ -437,8 +447,8 @@ async def delete_user(session: AsyncSession, user_id: uuid.UUID) -> None:
     await session.delete(user)
     await session.flush()
     await _keep_an_admin(session, before)
+    await end_sessions(session, [user_id])
     await session.commit()
-    await end_sessions([user_id])
 
 
 async def update_user(
@@ -476,10 +486,10 @@ async def update_user(
 
     await session.flush()
     await _keep_an_admin(session, before)
+    if ends_sessions:
+        await end_sessions(session, [user_id])
     await session.commit()
     await session.refresh(user)
-    if ends_sessions:
-        await end_sessions([user_id])
     roles = await load_user_roles(session, user)
     return user, [r.name for r in roles]
 
@@ -554,8 +564,8 @@ async def set_password_with_token(session: AsyncSession, raw_token: str, passwor
     if claimed.rowcount != 1:
         raise invalid
     user.hashed_password = await aget_password_hash(password)
+    await end_sessions(session, [user.id])
     await session.commit()
-    await end_sessions([user.id])
     logger.info("auth.password_token.used", user_id=str(user.id))
 
 
@@ -621,8 +631,8 @@ async def delete_role(
     await session.delete(role)
     await session.flush()
     await _keep_an_admin(session, before)
+    await end_sessions(session, members)
     await session.commit()
-    await end_sessions(members)
 
 
 async def update_role_scopes(
@@ -647,9 +657,11 @@ async def update_role_scopes(
     members = await _role_members(session, role_id) if removed else []
     await session.flush()
     await _keep_an_admin(session, before)
+    await end_sessions(
+        session, members
+    )  # only a narrowed role ends sessions; added scopes wait for sign-in
     await session.commit()
     await session.refresh(role)
-    await end_sessions(members)  # only a narrowed role ends sessions; added scopes wait for sign-in
     return role, scopes
 
 
@@ -689,8 +701,8 @@ async def revoke_scope(
     members = await _role_members(session, role_id)
     await session.flush()
     await _keep_an_admin(session, before)
+    await end_sessions(session, members)
     await session.commit()
-    await end_sessions(members)
     return role, await load_role_scopes(session, role_id)
 
 
@@ -707,9 +719,9 @@ async def set_role_active(
     members = await _role_members(session, role_id) if changed and not active else []
     await session.flush()
     await _keep_an_admin(session, before)
+    await end_sessions(session, members)
     await session.commit()
     await session.refresh(role)
-    await end_sessions(members)
     return role, await load_role_scopes(session, role_id)
 
 
@@ -740,8 +752,8 @@ async def revoke_role(session: AsyncSession, user_id: uuid.UUID, role_id: uuid.U
     await session.delete(link)
     await session.flush()
     await _keep_an_admin(session, before)
+    await end_sessions(session, [user_id])
     await session.commit()
-    await end_sessions([user_id])
 
 
 # ── Role membership (the ``roles`` API group) ──────────────────────────────────
@@ -850,9 +862,9 @@ async def reset_admin(
     )
     if held.first() is None:
         session.add(IAMUserRole(user_id=user.id, role_id=role.id))
+    await end_sessions(session, [user.id])
     await session.commit()
     await session.refresh(user)
-    await end_sessions([user.id])
     logger.warning("auth.iam.reset_admin", admin_email=email)
     roles = await load_user_roles(session, user)
     return user, [r.name for r in roles]
