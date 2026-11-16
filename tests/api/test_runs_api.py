@@ -257,7 +257,8 @@ async def test_slow_runs_answer_202_then_finish(
     resp = await client.post("/t/slow")
     assert resp.status_code == 202
     body = resp.json()
-    assert body["status"] == "running" and body["status_url"] == f"/api/runs/{body['run_id']}"
+    assert body["status"] == "running" and body["run_id"] == resp.headers["x-tuvl-run-id"]
+    assert "status_url" not in body  # nobody started this run with a token: nothing to point at
     for _ in range(40):
         await asyncio.sleep(0.05)
         if (await host.get(uuid.UUID(body["run_id"]))).status == "completed":
@@ -271,10 +272,12 @@ async def test_slow_runs_answer_202_then_finish(
 async def test_unhandled_errors_are_500_with_the_run_error(client: httpx.AsyncClient) -> None:
     resp = await client.post("/t/broken")
     assert resp.status_code == 500
-    assert (
-        resp.json()["error"]["error_type"] == "code_exception"
-        and "kaboom" in resp.json()["error"]["message"]
-    )
+    assert resp.json()["error"] == {
+        "error_type": "code_exception"
+    }  # an anonymous caller: the kind only
+    run = await client.get(f"/api/runs/{resp.headers['x-tuvl-run-id']}", headers=ADMIN)
+    assert run.json()["error"]["error_type"] == "code_exception"
+    assert "kaboom" in run.json()["error"]["message"]
 
 
 async def test_generic_start_without_waiting(client: httpx.AsyncClient, host: RuntimeHost) -> None:

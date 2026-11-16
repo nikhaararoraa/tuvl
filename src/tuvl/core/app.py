@@ -19,6 +19,7 @@ from tuvl.core.auth.federation import router as federation_router
 from tuvl.core.auth.roles_router import roles_router
 from tuvl.core.auth.router import iam_router
 from tuvl.core.auth.router import router as auth_router
+from tuvl.core.body_limit import BodyLimitMiddleware
 from tuvl.core.bootstrap import run_pre_flight
 from tuvl.core.config import KNOWN_ENVS, settings
 from tuvl.core.config_loader import load_all_configs
@@ -334,7 +335,14 @@ logger.info("API groups mounted", groups=sorted(_exposed), docs=_docs_mode)
 
 if settings.tuvl_allowed_hosts:
     app.add_middleware(AllowedHostsMiddleware)
-    logger.info("IP allowlist active", allowed_hosts=settings.tuvl_allowed_hosts)
+    logger.info(
+        "IP allowlist active",
+        allowed_hosts=settings.tuvl_allowed_hosts,
+        loopback_always_allowed=True,
+    )
+
+if settings.tuvl_max_body_bytes > 0:
+    app.add_middleware(BodyLimitMiddleware, limit=settings.tuvl_max_body_bytes)
 
 install_cors(app)  # last: outermost, so preflights and refusals carry the CORS headers
 

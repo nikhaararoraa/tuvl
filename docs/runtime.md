@@ -149,6 +149,8 @@ ones finish for `--graceful-timeout` seconds (20), then the runtime stops claimi
 lease expires and another worker resumes it from the last checkpoint. `terminationGracePeriodSeconds` in the
 chart (60) must exceed the sum, and a `preStop` pause lets the load balancer stop sending traffic first.
 
+`--allow-host` always lets loopback through, so a reverse proxy on the same host reaches the server whatever the list says unless its `X-Forwarded-For` is trusted: set `--forwarded-allow-ips` below.
+
 Behind an ingress, `--forwarded-allow-ips` (`forwardedAllowIps` in the chart) names the proxies whose
 `X-Forwarded-For` is trusted, so `--allow-host` and the logs see the real client. Leave it empty to trust
 only `127.0.0.1`; `*` trusts every sender and lets a client spoof its address. `--limit-max-requests`

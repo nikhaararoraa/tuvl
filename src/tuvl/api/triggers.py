@@ -17,6 +17,7 @@ import structlog
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
+from tuvl.api.auth import trigger_user
 from tuvl.api.runs import start_run
 from tuvl.api.uploads import file_inputs, is_multipart, start_upload_run
 from tuvl.contract.schema import WorkflowDocument
@@ -50,9 +51,14 @@ async def _payload(request: Request, method: str) -> dict[str, Any]:
 
 def _endpoint(doc: WorkflowDocument, method: str) -> Endpoint:
     async def endpoint(request: Request) -> JSONResponse:
+        user = await trigger_user(
+            request, doc
+        )  # who may start it is settled before the body is read
         if method not in ("GET", "DELETE") and is_multipart(request):
-            return await start_upload_run(request, doc)
-        return await start_run(request, doc, await _payload(request, method), trigger="http")
+            return await start_upload_run(request, doc, user=user)
+        return await start_run(
+            request, doc, await _payload(request, method), trigger="http", user=user
+        )
 
     endpoint.__name__ = f"trigger_{doc.metadata.name}"
     return endpoint

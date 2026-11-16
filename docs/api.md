@@ -34,6 +34,19 @@ A run descriptor (`202` body, `GET /api/runs/{id}`):
   "approval": { "approval_id": "…", "kind": "human", "title": "Refund 123", "form": { … }, "decide_url": "/api/approvals/…" } }
 ```
 
+A run no token started (a `public: true` trigger called anonymously) has no `status_url` or `events_url` in its `202`
+body: nobody could read what they point to. Keep the `run_id`; the operator can read the run with `iam:admin`.
+
+**Errors.** A run that fails answers `500` with `{ "run_id", "status", "error" }`. A caller with a token sees the whole
+`error` (`error_type`, `message`, `agent_id`), as the run's owner can read it from `GET /api/runs/{id}` anyway. An
+anonymous caller of a public trigger in production sees only `{ "error_type": … }`: a message can name tables, hosts and
+values. The text stays in the journal. `TUVL_EXPOSE_ERRORS=true` shows it to everyone, `false` hides it from an anonymous
+caller in dev mode as well; unset, dev mode shows it.
+
+**Body size.** A JSON request body over `TUVL_MAX_BODY_BYTES` (1 MiB; `0` turns the cap off) is `413`, by its
+`Content-Length` before it is read and by the bytes received when it is chunked. A `multipart/form-data` upload is bounded
+by the trigger's `upload` settings instead. A protected trigger answers `401` or `403` before its body is read.
+
 ### SSE events
 
 ```
