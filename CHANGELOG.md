@@ -39,6 +39,10 @@ release below is the current one.
 - **The `http` tool reads `${VAR}` only from the workflow's own text.** A `${VAR}` in a tool's `url` or `headers` used to be expanded after `{{ }}` input was rendered into it, so a value that arrived as input was read as an environment reference. The environment is now read first and input rendered second, the order `code.with` already used. The `tool_call` journal event and the error messages show the URL with `${VAR}` as written, never the value.
 - **The `http` tool reads `${VAR}` only from the workflow's own text.** A `${VAR}` in a tool's `url` or `headers` used to be expanded after `{{ }}` input was rendered into it, so a value that arrived as input was read as an environment reference. The environment is now read first and input rendered second, the order `code.with` already used. The `tool_call` journal event and the error messages show the URL with `${VAR}` as written, never the value.
 
+### Changed
+
+- **Federated login and federation-provider admin moved out of `tuvl.core.auth.router`** into `tuvl.core.auth.federation` (`router` in the `auth` API group, `admin_router` in `iam`). Routes, responses and behaviour are unchanged; only code that imported `oauth_start`, `_provider_config` or the federation admin functions from the router module needs the new path.
+
 ---
 
 ## [2.1.0-beta.5] — 2026-11-14

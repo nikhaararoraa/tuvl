@@ -19,7 +19,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from tuvl.core.auth import iam_service
+from tuvl.core.auth import federation, iam_service
 from tuvl.core.auth import router as auth_router
 from tuvl.core.auth.blacklist import token_blacklist
 from tuvl.core.auth.federation_loader import FEDERATION_REGISTRY
@@ -246,12 +246,12 @@ async def test_federation_path_traversal_rejected(isolated_federation_dir):
     admin_user = TokenUser(user_id="admin-1", scopes=[ADMIN_SCOPE])
 
     with pytest.raises(HTTPException) as exc:
-        await auth_router.get_federation_provider("../../etc", admin_user)
+        await federation.get_federation_provider("../../etc", admin_user)
     assert exc.value.status_code == 400
     assert "Invalid provider name" in exc.value.detail
 
     with pytest.raises(HTTPException) as exc:
-        await auth_router.save_federation_provider(
+        await federation.save_federation_provider(
             "../../etc", {"kind": "FederationProvider"}, admin_user
         )
     assert exc.value.status_code == 400
@@ -265,15 +265,15 @@ async def test_federation_admin_crud_round_trip(isolated_federation_dir):
         "spec": {"provider": "google", "client_id": "cid", "client_secret": "shh"},
     }
 
-    await auth_router.save_federation_provider("acme", body, admin_user)
-    assert await auth_router.list_federation_providers(admin_user) == ["acme"]
+    await federation.save_federation_provider("acme", body, admin_user)
+    assert await federation.list_federation_providers(admin_user) == ["acme"]
 
-    fetched = await auth_router.get_federation_provider("acme", admin_user)
+    fetched = await federation.get_federation_provider("acme", admin_user)
     assert fetched["spec"]["client_secret"] == "***"
 
-    await auth_router.delete_federation_provider("acme", admin_user)
+    await federation.delete_federation_provider("acme", admin_user)
     with pytest.raises(HTTPException) as exc:
-        await auth_router.get_federation_provider("acme", admin_user)
+        await federation.get_federation_provider("acme", admin_user)
     assert exc.value.status_code == 404
 
 

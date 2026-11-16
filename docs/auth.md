@@ -118,7 +118,7 @@ Behavior is pinned by `tests/core/test_auth_router.py` and `tests/core/test_iam_
 
 ## 4. Login & Identity
 
-All identity endpoints live in `tuvl/core/auth/router.py` under `/auth`.
+All identity endpoints live under `/auth`: in `tuvl/core/auth/router.py`, except federated login and federation-provider admin, which are in `tuvl/core/auth/federation.py`.
 
 ### Bootstrap
 
@@ -435,7 +435,8 @@ Rules of thumb: 401 always carries `WWW-Authenticate: Bearer` and means "re-auth
 | `tuvl/core/auth/crypto.py` | bcrypt hashing/verification + threadpool wrappers |
 | `tuvl/core/auth/blacklist.py` | Token revocation store (Redis / in-process) |
 | `tuvl/core/auth/iam_service.py` | Transport-neutral IAM service — the one implementation of bootstrap, login, refresh/logout, user & role CRUD, and federation-provider admin; `router.py` is a thin adapter over it |
-| `tuvl/core/auth/router.py` | `/auth` REST surface: bootstrap, login, me/refresh/logout, user & role admin, OAuth federation flow — a thin adapter over `iam_service.py` |
+| `tuvl/core/auth/router.py` | `/auth` REST surface: bootstrap, login, me/refresh/logout, user & role admin — a thin adapter over `iam_service.py` |
+| `tuvl/core/auth/federation.py` | Federated login (OAuth authorization-code and device flows) and the `/auth/admin/federation` provider admin |
 | `tuvl/core/auth/seed.py` | `kind: RoleSeed` and the once-only first-boot seed (roles + `TUVL_BOOTSTRAP_ADMIN_*` administrator) |
 | `tuvl/cli/commands/iam.py` | `tuvl iam`: the production IAM command line |
 | `tuvl/core/auth/federation_loader.py` | `kind: FederationProvider` YAML loader and registry |

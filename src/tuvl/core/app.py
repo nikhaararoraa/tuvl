@@ -14,6 +14,8 @@ from tuvl.core.api.artifacts_router import router as artifacts_router
 from tuvl.core.api.crud_router import build_crud_routers
 from tuvl.core.api.system_router import require_dev_mode
 from tuvl.core.api.system_router import router as system_router
+from tuvl.core.auth.federation import admin_router as federation_admin_router
+from tuvl.core.auth.federation import router as federation_router
 from tuvl.core.auth.roles_router import roles_router
 from tuvl.core.auth.router import iam_router
 from tuvl.core.auth.router import router as auth_router
@@ -311,7 +313,9 @@ if not settings.tuvl_dev_mode and settings.tuvl_telemetry_enabled:
 for _group, _router in (
     ("system", system_router),
     ("auth", auth_router),
+    ("auth", federation_router),
     ("iam", iam_router),
+    ("iam", federation_admin_router),
     ("roles", roles_router),
     ("admin", admin_router),
     ("artifacts", artifacts_router),
