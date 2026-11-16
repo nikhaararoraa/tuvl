@@ -13,7 +13,7 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -245,15 +245,16 @@ CurrentToken = Annotated[str, Depends(_oauth2_scheme)]
 
 @router.get(
     "/jwks.json",
-    summary="The public key that verifies tuvl access tokens (JWKS)",
+    summary="The public keys that verify tuvl access tokens (JWKS)",
 )
 async def jwks() -> dict[str, list[dict[str, str]]]:
-    """Ed25519 public key (RFC 8037) for gateways and services that verify tokens
-    themselves. Verification alone can't see logouts or ended sessions — call
-    ``/auth/me`` (or tuvl) when that matters."""
+    """Ed25519 public keys (RFC 8037) for gateways and services that verify tokens
+    themselves: the current key first, then any retired key that still verifies tokens
+    issued before a rotation (match on ``kid``). Verification alone can't see logouts or
+    ended sessions — call ``/auth/me`` (or tuvl) when that matters."""
     from tuvl.core.auth.keys import get_key_manager
 
-    return {"keys": [get_key_manager().jwk]}
+    return {"keys": get_key_manager().jwks}
 
 
 @router.get(
@@ -390,8 +391,15 @@ async def invite_user(
     response_model=list[UserResponse],
     summary="List all IAM users",
 )
-async def list_users(session: IamSession, _admin: AdminUser) -> list[UserResponse]:
-    pairs = await iam_service.list_users(session)
+async def list_users(
+    session: IamSession,
+    _admin: AdminUser,
+    limit: Annotated[
+        int | None, Query(ge=1, le=1000, description="At most this many users; omit for all.")
+    ] = None,
+    offset: Annotated[int, Query(ge=0, description="Skip this many users (ordered by email).")] = 0,
+) -> list[UserResponse]:
+    pairs = await iam_service.list_users(session, limit=limit, offset=offset)
     return [
         UserResponse(
             id=u.id,
@@ -526,8 +534,15 @@ async def create_role(
     response_model=list[RoleResponse],
     summary="List all roles with their scopes",
 )
-async def list_roles(session: IamSession, _admin: AdminUser) -> list[RoleResponse]:
-    pairs = await iam_service.list_roles(session)
+async def list_roles(
+    session: IamSession,
+    _admin: AdminUser,
+    limit: Annotated[
+        int | None, Query(ge=1, le=1000, description="At most this many roles; omit for all.")
+    ] = None,
+    offset: Annotated[int, Query(ge=0, description="Skip this many roles (ordered by name).")] = 0,
+) -> list[RoleResponse]:
+    pairs = await iam_service.list_roles(session, limit=limit, offset=offset)
     return [
         RoleResponse(
             id=role.id,

@@ -659,13 +659,52 @@ async def create_user(
     return user, []
 
 
-async def list_users(session: AsyncSession) -> list[tuple[IAMUser, list[str]]]:
-    result = await session.exec(select(IAMUser))
-    out: list[tuple[IAMUser, list[str]]] = []
-    for u in result.all():
-        roles = await load_user_roles(session, u)
-        out.append((u, [r.name for r in roles]))
-    return out
+_IN_CHUNK = 5000  # ids per IN (...) list
+
+
+async def _role_names_by_user(
+    session: AsyncSession, user_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, list[str]]:
+    """The names of the roles each of *user_ids* holds, in a query per few thousand users instead of one each."""
+    names: dict[uuid.UUID, list[str]] = {}
+    for start in range(0, len(user_ids), _IN_CHUNK):
+        rows = await session.exec(
+            select(IAMUserRole.user_id, IAMRole.name)
+            .join(IAMRole, col(IAMRole.id) == IAMUserRole.role_id)
+            .where(col(IAMUserRole.user_id).in_(user_ids[start : start + _IN_CHUNK]))
+            .order_by(col(IAMRole.name))
+        )
+        for user_id, name in rows.all():
+            names.setdefault(user_id, []).append(name)
+    return names
+
+
+async def _scopes_by_role(
+    session: AsyncSession, role_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, list[str]]:
+    """The scope names of each of *role_ids*, in a query per few thousand roles instead of one each."""
+    scopes: dict[uuid.UUID, list[str]] = {}
+    for start in range(0, len(role_ids), _IN_CHUNK):
+        rows = await session.exec(
+            select(IAMRoleScope.role_id, IAMRoleScope.scope_name)
+            .where(col(IAMRoleScope.role_id).in_(role_ids[start : start + _IN_CHUNK]))
+            .order_by(col(IAMRoleScope.scope_name))
+        )
+        for role_id, scope in rows.all():
+            scopes.setdefault(role_id, []).append(scope)
+    return scopes
+
+
+async def list_users(
+    session: AsyncSession, *, limit: int | None = None, offset: int = 0
+) -> list[tuple[IAMUser, list[str]]]:
+    """Users by email with their role names: two queries however many there are. No *limit*: all of them."""
+    stmt = select(IAMUser).order_by(col(IAMUser.email)).offset(offset)
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    users = list((await session.exec(stmt)).all())
+    names = await _role_names_by_user(session, [u.id for u in users])
+    return [(u, names.get(u.id, [])) for u in users]
 
 
 async def get_user(session: AsyncSession, user_id: uuid.UUID) -> tuple[IAMUser, list[str]]:
@@ -852,13 +891,16 @@ async def create_role(
     return role, scopes
 
 
-async def list_roles(session: AsyncSession) -> list[tuple[IAMRole, list[str]]]:
-    result = await session.exec(select(IAMRole))
-    out: list[tuple[IAMRole, list[str]]] = []
-    for role in result.all():
-        scopes = await load_role_scopes(session, role.id)
-        out.append((role, scopes))
-    return out
+async def list_roles(
+    session: AsyncSession, *, limit: int | None = None, offset: int = 0
+) -> list[tuple[IAMRole, list[str]]]:
+    """Roles by name with their scopes: two queries however many there are. No *limit*: all of them."""
+    stmt = select(IAMRole).order_by(col(IAMRole.name)).offset(offset)
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    roles = list((await session.exec(stmt)).all())
+    scopes = await _scopes_by_role(session, [r.id for r in roles])
+    return [(r, scopes.get(r.id, [])) for r in roles]
 
 
 async def delete_role(
@@ -1069,7 +1111,8 @@ async def list_role_summaries(
             )
         ).all()
     }
-    return [(r, await load_role_scopes(session, r.id), counts.get(r.id, 0)) for r in roles]
+    scopes = await _scopes_by_role(session, [r.id for r in roles])
+    return [(r, scopes.get(r.id, []), counts.get(r.id, 0)) for r in roles]
 
 
 async def find_users(

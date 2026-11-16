@@ -416,8 +416,16 @@ tuvl generate key --write
 
 - `TUVL_SIGNING_KEY` holds the hex-encoded 32-byte Ed25519 private key (64 hex chars), loaded once per process.
 - The derived public key verifies every incoming token; the private key is used only for minting.
-- Keep the key secret and stable: rotating it invalidates every outstanding token (all users re-login). There is no multi-key rollover; rotation is a hard cutover.
-- Because verification is offline, any process holding only the *public* key can verify tuvl tokens — fetch it from `GET /auth/jwks.json` (the `kid` in each token's header names it). Such a verifier can't see logouts or ended sessions.
+- Keep the key secret. Changing `TUVL_SIGNING_KEY` on its own invalidates every outstanding token (all users sign in again); rotate with `TUVL_SIGNING_KEY_PREVIOUS` instead (below).
+- Because verification is offline, any process holding only the *public* key can verify tuvl tokens — fetch them from `GET /auth/jwks.json` (the `kid` in each token's header names the one to use). Such a verifier can't see logouts or ended sessions.
+
+**Rotating the signing key without signing anyone out.** `TUVL_SIGNING_KEY_PREVIOUS` takes one or more retired private keys (64 hex characters each, comma-separated). They sign nothing; their public keys verify tokens already issued and are published at `/auth/jwks.json` after the current key. Because a rolling deploy runs old and new pods side by side, rotate in three steps:
+
+1. Make a key (`tuvl generate key`) and deploy with it in `TUVL_SIGNING_KEY_PREVIOUS` while `TUVL_SIGNING_KEY` still holds the current one. Every pod can now verify the new key; none signs with it yet.
+2. Deploy again with the two swapped: `TUVL_SIGNING_KEY` is the new key, `TUVL_SIGNING_KEY_PREVIOUS` the old one. New tokens carry the new `kid`; tokens issued earlier still verify.
+3. After the longest token lifetime has passed (`TUVL_TOKEN_TTL_SECONDS`, 24 hours by default), remove `TUVL_SIGNING_KEY_PREVIOUS`. A token still signed by the retired key is refused from then on.
+
+A value that is not 64 hex characters stops the boot naming the variable. Revocations and session ends do not depend on the key: a token revoked before the rotation stays revoked.
 
 ---
 
