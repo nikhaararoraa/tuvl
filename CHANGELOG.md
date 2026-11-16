@@ -22,6 +22,9 @@ release below is the current one.
 - **A worker survives a failing database call.** One failing claim, sweep or heartbeat used to end the poll loop or the heartbeat for good while `/health` went on answering. Each is now logged and retried, a failing sweep no longer blocks the claim, and a failed heartbeat is retried sooner than the lease runs out.
 - **A step whose run moved to another worker is cancelled.** It used to carry on, repeating its outside effects. The same happens when a whole lease passes without a good heartbeat.
 - **A schedule that cannot advance no longer stops the scheduler.** It is dropped with an error log and the other schedules go on.
+- **`PATCH /models/{model}/{id}` can set a field to `null`.** `{"note": null}` was dropped like a field left out, so a nullable field could never be cleared. It now is; a field the body leaves out is still untouched, and `null` on a required field is `422`. **Behaviour change:** a client that sends `null` to mean "no change" now clears the field.
+- **A list of records pages in a stable order** (by primary key), so `offset` no longer repeats or skips rows.
+- **A write the database refuses answers `409` or `422`, not `500`.** A duplicate value on create or update, or deleting a record another refers to, is `409`; a missing required field is `422`. The answer says which constraint, not which values.
 
 ### Security
 
@@ -29,6 +32,7 @@ release below is the current one.
 - **`--auto-login` gives the dev key only to a browser on the machine that runs `tuvl dev`.** Insight's index page embedded the key for every request. It now does so only for a loopback client addressed as `localhost` or a loopback address; a browser on another machine, or a page that reaches the server through a DNS name, pastes the key.
 - **`--allow-host` (`TUVL_ALLOWED_HOSTS`) applies to every route of the dev server.** It guarded only `/dev/*`.
 - **`TUVL_ENV` is read case-insensitively everywhere.** `TUVL_ENV=Production` was treated as not production in some places (development documents loaded, boot checks only warned, `tuvl iam export` asked for no login). One `settings.is_production` now decides, and an unknown value is logged at boot.
+- **The `http` tool reads `${VAR}` only from the workflow's own text.** A `${VAR}` in a tool's `url` or `headers` used to be expanded after `{{ }}` input was rendered into it, so a value that arrived as input was read as an environment reference. The environment is now read first and input rendered second, the order `code.with` already used. The `tool_call` journal event and the error messages show the URL with `${VAR}` as written, never the value.
 
 ---
 
