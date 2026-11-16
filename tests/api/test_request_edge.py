@@ -38,10 +38,10 @@ def _doc(name: str, trigger: dict[str, Any], **meta: Any) -> WorkflowDocument:
                         "engine": "code",
                         "code": {"run": name},
                         "inputs": dict(trigger.get("input", {})),
-                        "routes": {"default": "END", "error": "END.failed"},
+                        "routes": {"default": "END"},
                     }
                 ],
-                "outputs": {"default": {"body": "ok"}, "failed": {"status": 500}},
+                "outputs": {"default": {"body": "ok"}},
             },
         }
     )

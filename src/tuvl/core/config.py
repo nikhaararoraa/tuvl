@@ -223,6 +223,12 @@ class Settings(BaseSettings):
     tuvl_worker_concurrency: int = 8
     #: ``/health`` fails when the worker has made no poll attempt for this long (a hung loop, not a database outage)
     tuvl_worker_stall_seconds: float = 300.0
+    #: Largest request body (JSON, not multipart: those are bounded by the trigger's upload settings) in
+    #: bytes; larger is 413. 0 turns the cap off.
+    tuvl_max_body_bytes: int = 1_048_576
+    #: Whether a run's error text goes to an anonymous caller (no token, public trigger). Unset: only in dev
+    #: mode; otherwise the caller gets the error type and the run id, and the text stays in the journal.
+    tuvl_expose_errors: bool | None = None
 
     # OTLP collector endpoint (Jaeger, Grafana Tempo, etc.). The default protocol
     # is OTLP over HTTP (port 4318); "grpc" needs the ``tuvl[otel-grpc]`` extra.
