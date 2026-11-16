@@ -469,8 +469,10 @@ VECTOR_INDEXES: tuple[tuple[str, str], ...] = (
 _INDEX_LOCK = 0x7475766C_69647800
 
 
-async def ensure_indexes(engine: AsyncEngine, indexes: tuple[tuple[str, str], ...]) -> None:
-    """Create the missing *indexes* concurrently; rebuild one left invalid by a build that died.
+async def ensure_indexes(
+    engine: AsyncEngine, indexes: tuple[tuple[str, str], ...], *, unique: bool = False
+) -> None:
+    """Create the missing *indexes* concurrently (unique ones with *unique*); rebuild one left invalid by a build that died.
 
     One process at a time, on an advisory lock: another would see an index still being built (it
     exists, not yet valid) and drop it. A process that finds the lock taken skips the work rather
@@ -501,13 +503,47 @@ async def ensure_indexes(engine: AsyncEngine, indexes: tuple[tuple[str, str], ..
                     if valid is False:
                         await conn.execute(text(f"DROP INDEX CONCURRENTLY IF EXISTS {name}"))
                     logger.info("db.index.building", index=name)
+                    kind = "UNIQUE INDEX" if unique else "INDEX"
                     await conn.execute(
-                        text(f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {name} {body}")
+                        text(f"CREATE {kind} CONCURRENTLY IF NOT EXISTS {name} {body}")
                     )
                 except SQLAlchemyError as exc:
                     logger.warning("db.index.failed", index=name, error=str(exc))
         finally:
             await conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": _INDEX_LOCK})
+
+
+async def ensure_iam_indexes(engine: AsyncEngine) -> None:
+    """Make an email one identity whatever its case: a unique index on ``lower(email)``.
+
+    Users stored before emails were normalised may already differ only by case. Then no index is built,
+    the number of such emails is logged, and every lookup still answers; remove or merge them and restart.
+    """
+    from tuvl.core.auth.models import IAMUser
+
+    users = table_of(IAMUser).name
+    async with engine.connect() as conn:
+        groups = (
+            await conn.execute(
+                text(
+                    f'SELECT count(*) FROM (SELECT 1 FROM "{users}" '
+                    "GROUP BY lower(email) HAVING count(*) > 1) d"
+                )
+            )
+        ).scalar_one()
+    if groups:
+        logger.warning(
+            "iam.email.duplicates",
+            groups=groups,
+            hint="users whose emails differ only by case: remove or merge them, then restart "
+            "to make an email unique whatever its case",
+        )
+        return
+    await ensure_indexes(
+        engine,
+        (("uq_tuvl_iam_users_email_lower", f'ON "{users}" (lower(email))'),),
+        unique=True,
+    )
 
 
 async def ensure_iam_columns(conn: AsyncConnection) -> None:
@@ -584,6 +620,7 @@ async def init_db() -> None:
                 )
             )
             await ensure_iam_columns(conn)
+        await ensure_iam_indexes(_engines_rw[_PRIMARY_DS])
         logger.info("IAM tables ready", datasource=_PRIMARY_DS, pid=pid)
 
     # Create tuvl_system_model_versions tracking table on the primary datasource.

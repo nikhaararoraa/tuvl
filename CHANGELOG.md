@@ -36,6 +36,9 @@ release below is the current one.
 
 ### Security
 
+- **One password rule on every path.** 8 characters at least and 72 bytes at most applied only to set-password links; admin-created users, the bootstrap administrator, `reset-admin` and the seeded `TUVL_BOOTSTRAP_ADMIN_PASSWORD` accepted a one-character password, and a longer one was cut at 72 bytes by bcrypt. They all use `iam_service.validate_password` now (`422` over REST, a clear message from `tuvl iam`; a too-short bootstrap password fails the first boot naming the variable). **Behaviour change:** a bootstrap or seeded password under 8 characters is refused.
+- **The first administrator is created under the seed's advisory lock.** Two `POST /auth/bootstrap` calls, or one and a booting replica, each saw an empty table and made an administrator (or crashed on the unique role name). One wins; the others get `409`.
+- **A database error on user creation is logged as its first line**, without the traceback: the driver's message and the statement's parameters can carry the failing row, password hash included.
 - **The `http` tool reads `${VAR}` only from the workflow's own text.** A `${VAR}` in a tool's `url` or `headers` used to be expanded after `{{ }}` input was rendered into it, so a value that arrived as input was read as an environment reference. The environment is now read first and input rendered second, the order `code.with` already used. The `tool_call` journal event and the error messages show the URL with `${VAR}` as written, never the value.
 - **`--auto-login` gives the dev key only to a browser on the machine that runs `tuvl dev`.** Insight's index page embedded the key for every request. It now does so only for a loopback client addressed as `localhost` or a loopback address; a browser on another machine, or a page that reaches the server through a DNS name, pastes the key.
 - **`--allow-host` (`TUVL_ALLOWED_HOSTS`) applies to every route of the dev server.** It guarded only `/dev/*`.
@@ -44,6 +47,12 @@ release below is the current one.
 - **The `http` tool reads `${VAR}` only from the workflow's own text.** A `${VAR}` in a tool's `url` or `headers` used to be expanded after `{{ }}` input was rendered into it, so a value that arrived as input was read as an environment reference. The environment is now read first and input rendered second, the order `code.with` already used. The `tool_call` journal event and the error messages show the URL with `${VAR}` as written, never the value.
 - **The `http` tool reads `${VAR}` only from the workflow's own text.** A `${VAR}` in a tool's `url` or `headers` used to be expanded after `{{ }}` input was rendered into it, so a value that arrived as input was read as an environment reference. The environment is now read first and input rendered second, the order `code.with` already used. The `tool_call` journal event and the error messages show the URL with `${VAR}` as written, never the value.
 - **The `http` tool reads `${VAR}` only from the workflow's own text.** A `${VAR}` in a tool's `url` or `headers` used to be expanded after `{{ }}` input was rendered into it, so a value that arrived as input was read as an environment reference. The environment is now read first and input rendered second, the order `code.with` already used. The `tool_call` journal event and the error messages show the URL with `${VAR}` as written, never the value.
+
+### Fixed
+
+- **A role name or scope a token cannot carry is refused where it is written.** `orders:*` or a role name with a space was stored, and then every sign-in, refresh and federated login of a member failed with a 500 from the token minter. The API and `tuvl iam` answer `422`, a `RoleSeed` with one is invalid, and one already stored is left out of that user's token and logged (`auth.token.invalid_entry_skipped`) instead of blocking the login.
+- **Emails are one identity whatever their case.** `Ann@X.com` and `ann@x.com` were two users, and a federated sign-in could miss its existing account. Emails are stored trimmed and lower case, compared case-insensitively, and guarded by a unique index on `lower(email)` built at boot; users stored earlier that differ only by case are logged (`iam.email.duplicates`) and the index waits for them to be merged.
+- **Assigning a role twice at once no longer returns a 500.** A second request that lost the race on the assignment's key now sees the assignment and succeeds.
 
 ---
 

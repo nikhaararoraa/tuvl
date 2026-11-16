@@ -47,8 +47,6 @@ iam_app.add_typer(roles_app, name="roles")
 iam_app.add_typer(users_app, name="users")
 iam_app.add_typer(scopes_app, name="scopes")
 
-MIN_PASSWORD = 8
-
 
 @dataclass
 class _Opts:
@@ -114,8 +112,10 @@ def _new_password(what: str) -> str:
     password = os.environ.get("TUVL_IAM_NEW_PASSWORD") or typer.prompt(
         f"New password for {what}", hide_input=True, confirmation_prompt=True
     )
-    if len(password) < MIN_PASSWORD:
-        raise _fail(f"The password must be at least {MIN_PASSWORD} characters.")
+    try:
+        _svc().validate_password(password)
+    except _svc().ValidationError as exc:
+        raise _fail(str(exc)) from None
     return password
 
 
