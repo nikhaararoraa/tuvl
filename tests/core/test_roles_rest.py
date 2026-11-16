@@ -20,6 +20,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from tuvl.core.auth import iam_service
 from tuvl.core.auth.blacklist import token_blacklist
 from tuvl.core.auth.models import (
+    IAMLoginAttempt,
     IAMRevokedToken,
     IAMRole,
     IAMRoleScope,
@@ -67,6 +68,7 @@ async def db(monkeypatch):
                 IAMRoleScope.__table__,
                 IAMSessionEnd.__table__,
                 IAMRevokedToken.__table__,
+                IAMLoginAttempt.__table__,
             ],
         )
 

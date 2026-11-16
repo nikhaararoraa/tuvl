@@ -28,6 +28,7 @@ from __future__ import annotations
 import copy
 import datetime
 import hashlib
+import math
 import re
 import secrets
 import uuid
@@ -37,7 +38,7 @@ from typing import Any
 
 import yaml as _yaml
 from fastapi.concurrency import run_in_threadpool
-from sqlalchemy import case, distinct, func, text, update
+from sqlalchemy import case, delete, distinct, func, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import col, or_, select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -46,6 +47,7 @@ from tuvl.core.auth.blacklist import token_blacklist
 from tuvl.core.auth.crypto import aget_password_hash, averify_password, get_password_hash
 from tuvl.core.auth.federation_loader import load_all_federation_providers
 from tuvl.core.auth.models import (
+    IAMLoginAttempt,
     IAMPasswordToken,
     IAMRole,
     IAMRoleScope,
@@ -87,6 +89,14 @@ class ConflictError(IamError):
 
 class AuthenticationError(IamError):
     """Credentials or the caller's identity could not be authenticated."""
+
+
+class ThrottledError(AuthenticationError):
+    """Too many failed sign-ins for this login or address: try again in ``retry_after`` seconds."""
+
+    def __init__(self, retry_after: int) -> None:
+        super().__init__(f"Too many failed attempts. Try again in {retry_after} seconds.")
+        self.retry_after = retry_after
 
 
 class ForbiddenError(IamError):
@@ -385,11 +395,133 @@ async def bootstrap(
     return await build_token_for_user(session, user)
 
 
-async def _verified_user(session: AsyncSession, *, login_str: str, password: str) -> IAMUser:
+# ── Login throttle ─────────────────────────────────────────────────────────────
+
+#: Wrong passwords a login may have before it starts to wait; then 2, 4, 8 ... seconds, up to the cap.
+LOGIN_FREE_FAILURES = 5
+LOGIN_MAX_DELAY_SECONDS = 900
+#: A login with no failure for this long is forgotten.
+LOGIN_FORGET_SECONDS = 24 * 3600
+#: The window in which one address's failures are counted (``settings.tuvl_login_ip_failures`` of them).
+LOGIN_IP_WINDOW_SECONDS = 900
+_IP_TABLE_MAX = 10_000
+_PURGE_EVERY_SECONDS = 60
+
+#: address -> (start of its window, failures in it); kept per process, so a restart forgets it
+_ip_failures: dict[str, tuple[datetime.datetime, int]] = {}
+_last_purge: datetime.datetime | None = None
+
+
+def reset_login_throttle() -> None:
+    """Forget the per-address counters this process keeps."""
+    global _last_purge
+    _ip_failures.clear()
+    _last_purge = None
+
+
+def _login_key(login_str: str) -> str:
+    return hashlib.sha256(normalize_email(login_str).encode()).hexdigest()
+
+
+def _ip_wait(ip: str | None, now: datetime.datetime) -> int:
+    """Seconds an address still has to wait (0: it may try)."""
+    if not ip or settings.tuvl_login_ip_failures <= 0:
+        return 0
+    entry = _ip_failures.get(ip)
+    if entry is None:
+        return 0
+    started, failures = entry
+    left = LOGIN_IP_WINDOW_SECONDS - (now - started).total_seconds()
+    if left <= 0:
+        del _ip_failures[ip]
+        return 0
+    return math.ceil(left) if failures >= settings.tuvl_login_ip_failures else 0
+
+
+def _ip_failed(ip: str | None, now: datetime.datetime) -> None:
+    if not ip or settings.tuvl_login_ip_failures <= 0:
+        return
+    entry = _ip_failures.get(ip)
+    if entry is not None and (now - entry[0]).total_seconds() < LOGIN_IP_WINDOW_SECONDS:
+        _ip_failures[ip] = (entry[0], entry[1] + 1)
+        return
+    if len(_ip_failures) >= _IP_TABLE_MAX:
+        for stale in [
+            a
+            for a, (s, _) in _ip_failures.items()
+            if (now - s).total_seconds() >= LOGIN_IP_WINDOW_SECONDS
+        ]:
+            del _ip_failures[stale]
+        if len(_ip_failures) >= _IP_TABLE_MAX:
+            _ip_failures.pop(next(iter(_ip_failures)))
+    _ip_failures[ip] = (now, 1)
+
+
+async def _purge_old_attempts(session: AsyncSession, now: datetime.datetime) -> None:
+    """Forget logins with no failure for a day (at most once a minute per process)."""
+    global _last_purge
+    if _last_purge is not None and (now - _last_purge).total_seconds() < _PURGE_EVERY_SECONDS:
+        return
+    _last_purge = now
+    cutoff = now - datetime.timedelta(seconds=LOGIN_FORGET_SECONDS)
+    await session.exec(delete(IAMLoginAttempt).where(col(IAMLoginAttempt.updated_at) < cutoff))
+
+
+async def _record_failure(session: AsyncSession, key: str, ip: str | None) -> int:
+    """Count one wrong password against *key* and *ip*; the new count of the login.
+
+    The row is locked while it is counted, so guesses made at once are all counted; two that create it
+    together are told apart by the primary key.
+    """
+    now = _now()
+    _ip_failed(ip, now)
+    await _purge_old_attempts(session, now)
+    for _ in range(3):
+        row = await session.get(IAMLoginAttempt, key, populate_existing=True, with_for_update=True)
+        if row is None:
+            row = IAMLoginAttempt(key=key, failures=0, updated_at=now)
+            session.add(row)
+        row.failures += 1
+        row.updated_at = now
+        row.locked_until = (
+            now
+            + datetime.timedelta(
+                seconds=min(
+                    LOGIN_MAX_DELAY_SECONDS, 2 ** min(row.failures - LOGIN_FREE_FAILURES, 20)
+                )
+            )
+            if row.failures > LOGIN_FREE_FAILURES
+            else None
+        )
+        try:
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()  # another attempt created the row first: count on top of it
+            continue
+        return row.failures
+    logger.warning("auth.login.failure_not_counted", login_hash=key[:16])
+    return 0
+
+
+async def _verified_user(
+    session: AsyncSession, *, login_str: str, password: str, client_ip: str | None = None
+) -> IAMUser:
     """The active user these credentials belong to, or :class:`AuthenticationError`.
 
-    The message never distinguishes "no such user" from "wrong password" (user-enumeration guard).
+    The message never distinguishes "no such user" from "wrong password" (user-enumeration guard), and a
+    login that has failed too often waits (:class:`ThrottledError`) whether or not it exists. While it
+    waits even the right password is refused, and no password is checked.
     """
+    now = _now()
+    key = _login_key(login_str)
+    attempt = await session.get(IAMLoginAttempt, key, populate_existing=True)
+    wait = _ip_wait(client_ip, now)
+    if not wait and attempt is not None and attempt.locked_until and attempt.locked_until > now:
+        wait = max(1, math.ceil((attempt.locked_until - now).total_seconds()))
+    if wait:
+        logger.warning("auth.login.throttled", login_hash=key[:16], ip=client_ip, retry_after=wait)
+        raise ThrottledError(wait)
+
     user = await get_user_by_login(session, login_str)
 
     # Constant-time-ish: always run one bcrypt verification, even for a missing
@@ -399,13 +531,42 @@ async def _verified_user(session: AsyncSession, *, login_str: str, password: str
     password_ok = await averify_password(password, candidate_hash)
 
     if user is None or not user.is_active or user.hashed_password is None or not password_ok:
+        user_id = (
+            str(user.id) if user is not None else None
+        )  # before counting: a rollback expires `user`
+        failures = await _record_failure(session, key, client_ip)
+        logger.warning(
+            "auth.login.failed",
+            login_hash=key[:16],
+            known=user_id is not None,
+            user_id=user_id,
+            failures=failures,
+            ip=client_ip,
+        )
         raise AuthenticationError("Incorrect email or password.")
+    if attempt is not None:
+        await session.delete(attempt)
+        await session.commit()
     return user
 
 
-async def authenticate_admin(session: AsyncSession, *, login_str: str, password: str) -> IAMUser:
+async def unlock_login(session: AsyncSession, login_str: str) -> bool:
+    """Let a login that is waiting after failed attempts try again now. True when it had failures."""
+    row = await session.get(IAMLoginAttempt, _login_key(login_str), populate_existing=True)
+    if row is None:
+        return False
+    await session.delete(row)
+    await session.commit()
+    return True
+
+
+async def authenticate_admin(
+    session: AsyncSession, *, login_str: str, password: str, client_ip: str | None = None
+) -> IAMUser:
     """Verify credentials and require ``iam:admin`` through an active role (used by ``tuvl iam``)."""
-    user = await _verified_user(session, login_str=login_str, password=password)
+    user = await _verified_user(
+        session, login_str=login_str, password=password, client_ip=client_ip
+    )
     roles = await load_user_roles(session, user, active_only=True)
     scopes = await load_role_scopes_for_roles(session, [r.id for r in roles])
     if ADMIN_SCOPE not in scopes:
@@ -413,11 +574,16 @@ async def authenticate_admin(session: AsyncSession, *, login_str: str, password:
     return user
 
 
-async def login(session: AsyncSession, *, login_str: str, password: str) -> str:
+async def login(
+    session: AsyncSession, *, login_str: str, password: str, client_ip: str | None = None
+) -> str:
     """Verify credentials and mint a token. Raises :class:`AuthenticationError`
     on any failure — the message never distinguishes "no such user" from
-    "wrong password" (user-enumeration guard)."""
-    user = await _verified_user(session, login_str=login_str, password=password)
+    "wrong password" (user-enumeration guard) — and :class:`ThrottledError` while
+    the login or the *client_ip* has to wait."""
+    user = await _verified_user(
+        session, login_str=login_str, password=password, client_ip=client_ip
+    )
     token = await build_token_for_user(session, user)
     logger.info("auth.login.password", email=user.email)
     return token
@@ -967,6 +1133,9 @@ async def reset_admin(
     )
     if held.first() is None:
         session.add(IAMUserRole(user_id=user.id, role_id=role.id))
+    waiting = await session.get(IAMLoginAttempt, _login_key(email), populate_existing=True)
+    if waiting is not None:
+        await session.delete(waiting)
     await end_sessions(session, [user.id])
     await session.commit()
     await session.refresh(user)

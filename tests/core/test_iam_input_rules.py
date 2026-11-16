@@ -21,6 +21,7 @@ from tuvl.core.auth import router as auth_router
 from tuvl.core.auth.blacklist import token_blacklist
 from tuvl.core.auth.iam_service import ConflictError, ValidationError
 from tuvl.core.auth.models import (
+    IAMLoginAttempt,
     IAMPasswordToken,
     IAMRevokedToken,
     IAMRole,
@@ -48,6 +49,7 @@ TABLES = [
     IAMPasswordToken,
     IAMSessionEnd,
     IAMRevokedToken,
+    IAMLoginAttempt,
     SystemRegistry,
 ]
 

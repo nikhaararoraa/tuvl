@@ -17,6 +17,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from tuvl.core.auth import router as auth_router
 from tuvl.core.auth.blacklist import token_blacklist
 from tuvl.core.auth.models import (
+    IAMLoginAttempt,
     IAMPasswordToken,
     IAMRevokedToken,
     IAMRole,
@@ -64,6 +65,7 @@ async def env(monkeypatch):
         IAMPasswordToken.__table__,
         IAMSessionEnd.__table__,
         IAMRevokedToken.__table__,
+        IAMLoginAttempt.__table__,
     ]
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all, tables=tables)
