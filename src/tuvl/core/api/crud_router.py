@@ -120,6 +120,27 @@ def _make_crud_router(model_name: str) -> APIRouter:
     # Automatically routes to the datasource declared in the model's YAML.
     _session = model_session(model_name)
 
+    def _check_include(incl: frozenset[str], user: TokenUser) -> None:
+        """An include embeds records of the related model, so the caller needs what that model asks of a
+        reader (its read scope, and its read groups when it has them); ``iam:admin`` passes."""
+        from tuvl.core.models.loader import MODEL_RELATIONS
+
+        if "iam:admin" in user.scopes:
+            return
+        for rel in MODEL_RELATIONS.get(model_name, ()):
+            if rel["name"] not in incl:
+                continue
+            related = rel["model"]
+            related_access: dict = (SCHEMA_REGISTRY.get(related) or {}).get("access") or {}
+            scope = str(related_access.get("read_scope") or f"{related.lower()}:read")
+            groups = _norm_groups(related_access.get("read_groups"))
+            if scope not in user.scopes or (groups and not set(groups) & set(user.groups)):
+                needs = f"scope '{scope}'" + (f" and one of the groups {groups}" if groups else "")
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Embedding '{rel['name']}' needs read access to {related}: {needs}.",
+                )
+
     def _present(value: Any, user: TokenUser, cls: Any, incl: frozenset[str] = _NO_INCLUDE) -> Any:
         """*value* (a record, or a list of them) as *user* may see it: the ``secure`` fields they may not
         read are left out, in the record and in the related records an include embeds."""
@@ -194,6 +215,7 @@ def _make_crud_router(model_name: str) -> APIRouter:
             raise HTTPException(status_code=422, detail=f"Cannot filter on: {', '.join(refused)}.")
 
         if incl and ExpandedCls is not None:
+            _check_include(incl, user)
             rows = await repo.list_expanded(
                 include=incl, criteria=criteria, limit=limit, offset=offset
             )
@@ -226,6 +248,7 @@ def _make_crud_router(model_name: str) -> APIRouter:
         incl = _parse_include(include)
 
         if incl and ExpandedCls is not None:
+            _check_include(incl, user)
             result = await repo.get_expanded(record_id, incl)
             if result is None:
                 raise HTTPException(status_code=404, detail=f"{model_name} '{record_id}' not found")

@@ -195,20 +195,20 @@ async def test_a_writer_is_not_handed_back_the_secure_values(make_client) -> Non
 async def test_embedded_records_follow_their_own_models_scope(make_client) -> None:
     person_id, _ = await seed(make_client)
     plain = (
-        await make_client("person:read").get(f"/models/person/{person_id}?include=pets")
+        await make_client("person:read", "pet:read").get(f"/models/person/{person_id}?include=pets")
     ).json()
     assert "ssn" not in plain and plain["pets"][0]["name"] == "Rex"
     assert "microchip" not in plain["pets"][0]
 
-    own_only = make_client("person:read", "person:read_secure")
+    own_only = make_client("person:read", "person:read_secure", "pet:read")
     mixed = (await own_only.get(f"/models/person/{person_id}?include=pets")).json()
     assert mixed["ssn"] == SSN and "microchip" not in mixed["pets"][0]
 
-    pets_only = make_client("person:read", "pet:read_secure")
+    pets_only = make_client("person:read", "pet:read", "pet:read_secure")
     other = (await pets_only.get(f"/models/person/{person_id}?include=pets")).json()
     assert "ssn" not in other and other["pets"][0]["microchip"] == CHIP
 
-    listed = (await make_client("pet:read").get("/models/pet/?include=owner")).json()
+    listed = (await make_client("pet:read", "person:read").get("/models/pet/?include=owner")).json()
     assert "microchip" not in listed[0] and "ssn" not in listed[0]["owner"]
     assert (await make_client("iam:admin").get("/models/pet/?include=owner")).json()[0]["owner"][
         "ssn"

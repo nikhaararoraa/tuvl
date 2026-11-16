@@ -50,8 +50,8 @@ release below is the current one.
 - **A datasource without a read replica holds one connection pool, not two.** A read-only engine to the same server was always built, doubling the connections each process held. Without `ro_host` reads share the read-write pool. The unused `db_pool_min`, `db_pool_max` and `db_echo` settings are gone.
 - **An unreachable database no longer signals the parent process in production.** Startup sent `SIGTERM` to its parent whenever that was not PID 1, which kills a supervisor or a test runner. Only `tuvl dev` (whose reloader would otherwise idle) does that now; in production startup raises and the server exits non-zero.
 - **Two workflows on one `method path` stop a production boot** (they were skipped with an error log and the boot went on, so one of them was silently not served). Development still skips and logs.
-- **`?include=` returns the records it embeds.** The relations were loaded and then dropped, because the read endpoints answered with the plain read schema; a model with relations now answers with its expanded schema (the relation fields are optional, present only when asked for).
 - **A field is secure for the model that declares it.** The registry was a set of field names, so an unrelated model's field with the same name was hidden too; the CRUD API now uses a model-to-fields registry (`SECURE_BY_MODEL`). Journal, prompt and tool masking, which see data with no model attached, still work by name.
+- **`?include=` returns the records it embeds, and needs read access to the related model.** The relations were loaded and then dropped, because the read endpoints answered with the plain read schema; a model with relations now answers with its expanded schema (the relation fields are optional, present only when asked for). Because it now returns what it loads, an include is refused (`403`) unless the caller may read the related model (its read scope, and its read groups if it pins any).
 
 ### Security
 
